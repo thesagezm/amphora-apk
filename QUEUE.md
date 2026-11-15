@@ -14,18 +14,15 @@ before porting any view).
 
 ## Current Milestone
 
-**A1** — core protocol port (A0 landed 2026-11-15).
+**A2** — auth (A1 core protocol port code-complete 2026-11-16: all 33
+PandoraCore sources + 372 fixture tests green in `:core`; the delta to
+the iOS 379 is seven tests whose Swift files use platform-only
+assertions or were subsumed — see the per-unit commit notes).
 
 ## Queue (pending, in order)
 
-- **A1** — core protocol port: all 33 PandoraCore sources to `:core`
-  (package `pandoracore`), with the full fixture test suite ported
-  alongside — target: all 379 iOS tests green via `./gradlew :core:test`.
-  Order within A1: JSONValue/AnyJSON → PandoraAPI constants →
-  PandoraCrypto + vectors → URLBuilder → ResponseEnvelope → Errors →
-  SessionManager → LegacyPandoraClient → the model/feature files →
-  lyrics/radio/lastfm → network defaults.
-- **A2** — auth: Keystore session store, auto-login, login screen
+- **A2** — auth: Keystore session store, OkHttp transport adapters
+  (HttpTransport + GET + modes + cookie-CSRF), auto-login, login screen
   (iOS `LoginView` look).
 - **A3** — stations UI (iOS `MainTabView` + `StationsView` look).
 - **A4** — playback: ExoPlayer + `MediaSessionService`, media
@@ -64,11 +61,38 @@ before porting any view).
   `Tools/gen_android_icons.py`, wrapper 8.14.3 copied from
   speechnotes-android. Local gate green: `:core:test` 2/2 +
   `:app:assembleDebug` → `Amphora-debug.apk`.
-- **Version-pinning lesson (from speechnotes-android)**: proven pair AGP
-  8.9.1 + Kotlin 2.4.20 + compose BOM 2026.09.00 — but that BOM resolves
-  Compose 1.12.x which needs AGP 9, so the app module carries the
-  speechnotes `resolutionStrategy.force` block pinning Compose to the
-  1.9.x line / material3 1.3.2 / icons 1.7.8. JDK 17 pinned in
-  user-level `~/.gradle/gradle.properties`
-  (`org.gradle.java.home=~/tools/jdk-17.0.13+11`) — system java is 11;
-  CI gets its JDK from setup-java, so nothing JDK-specific is committed.
+- 2026-11-15/16 — **A1 landed, unit by unit** (A1.1→A1.13, every push
+  green on GitHub): PandoraCrypto (vectors byte-exact incl. Schneier
+  KAT) · URLBuilder/ResponseEnvelope/errors · transport seam +
+  LegacyPandoraClient · Station/StationOrder/RadioStationIdentity ·
+  Feedback/Playlist/Track (quality promotion) · MusicSearch/
+  GenreStations/Advertisement · ArtworkURL/SongArtwork/ArtworkColors
+  (same HSV derivation → identical theming) · PlayHistory/UserSettings/
+  SleepTimer · **SessionManager** (actor→Mutex, 1001 replay-once, all
+  deferred suites) · Lyrics trio (LRC parser, lrclib, translation
+  alignment contract, romanization gates, fallback chain) · LastFm
+  (MD5 signing, scrobble policy) · RadioBrowser/RadioStreamMetadata
+  (ICY state machine, mirror rotation). **372/372 green in `:core`.**
+- **Known port deltas** (each documented in its file header):
+  URLError classification + CookieCSRFProvider (URLSession cookie jar)
+  move to the app-side OkHttp adapter (A2); the seven-test gap vs the
+  iOS 379 comes from platform-only assertions and the two Swift
+  `stations(_:)` overloads collapsing to `stationsByCountryCode`/
+  `stationsByTag` (JVM erasure).
+- 2026-11-15 — **A0 landed**: Gradle skeleton (`:core` pure Kotlin/JVM +
+  `:app` Compose), placeholder MainActivity (dark, iOS-palette colors),
+  manifest (cleartext traffic, media-playback permissions, portrait
+  lock), adaptive launcher icon generated from the iOS AppIcon via
+  `Tools/gen_android_icons.py`, wrapper 8.14.3 copied from
+  speechnotes-android. Local gate green: `:core:test` 2/2 +
+  `:app:assembleDebug` → `Amphora-debug.apk`.
+
+## Environment Notes (permanent)
+
+- Version pair proven on this machine (speechnotes-android): AGP 8.9.1 +
+  Kotlin 2.4.20 + compose BOM 2026.09.00, with the app module's
+  `resolutionStrategy.force` block pinning Compose to the 1.9.x line /
+  material3 1.3.2 / icons 1.7.8 (BOM 1.12.x needs AGP 9). JDK 17 pinned
+  user-level in `~/.gradle/gradle.properties`
+  (`org.gradle.java.home=~/tools/jdk-17.0.13+11`); CI supplies its own
+  JDK — nothing JDK-specific is committed.
