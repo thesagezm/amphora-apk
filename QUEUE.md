@@ -5,9 +5,12 @@ Updated in the same commit as the work it describes.
 
 **Working style (2026-11-15, user):** no subagents — do the research and
 the implementation directly in this session. Commit fast, commit often —
-small commits, one concern each, at every green unit. The UI must look
-like the iOS version (`~/Amphora-ios/Amphora/UI/` is the design spec;
-read the SwiftUI file before porting any view).
+small commits, one concern each, at every green unit. **Confirmation of
+success is a green GitHub Actions build — do not expect feedback from the
+user between units; while the GitHub build runs, move on to the next
+task.** The UI must look like the iOS version
+(`~/Amphora-ios/Amphora/UI/` is the design spec; read the SwiftUI file
+before porting any view).
 
 ## Current Milestone
 
@@ -51,4 +54,7 @@ manifest, icon, this file). In progress this session.
 
 - 2026-11-15 — session 1: plan approved (native Kotlin + Compose +
   Media3, full parity, repo `~/code/Amphora-APK`). AGENTS.md + QUEUE.md
-  created. A0 starting.
+  created (commit `6f92f4a`). User additions: success = green GitHub
+  build, no user feedback expected between units, fire-and-continue
+  while CI runs → `.github/workflows/android-build.yml` added
+  (`:core:test` + `:app:assembleDebug` + APK artifact). A0 starting.

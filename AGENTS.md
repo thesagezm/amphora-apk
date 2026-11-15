@@ -23,7 +23,7 @@ distribution is out of scope. Never commit credentials, tokens, or secrets.
 
 ---
 
-## THE MOST IMPORTANT RULES: No Subagents · Commit Fast, Commit Often
+## THE MOST IMPORTANT RULES: No Subagents · Commit Fast, Commit Often · GitHub Build Is the Verdict
 
 These rules override everything below. Read them first, apply them always.
 
@@ -35,13 +35,25 @@ These rules override everything below. Read them first, apply them always.
   not accumulate several features into one commit; do not polish before
   committing. A repo with many small commits is the deliverable's history.
 - Never leave uncommitted work sitting at the end of a unit. Build green →
-  commit → update `QUEUE.md` in the same commit → next unit.
+  commit → push → update `QUEUE.md` in the same commit → next unit.
+- **Confirmation of success is a green GitHub Actions build.** Do not
+  expect feedback from the user between units — a green `Android Build`
+  run on the latest pushed commit is the unit's verdict. The user tests on
+  a phone when they choose to; their feedback (when it comes) jumps the
+  queue, but its absence is not a blocker.
+- **Fire-and-continue: while the GitHub build runs, move on to the next
+  task.** Never wait, sleep, poll, or idle on a run. Push, note the run in
+  `QUEUE.md`, and immediately start the next unit. Before starting a unit,
+  do one quick non-blocking check (`gh run list --limit 5`); if a recent
+  run FAILED, prioritize fixing that; if one is still in progress, ignore
+  it and continue.
 - A unit is the smallest slice that leaves the tree building and tests
   green. Examples: "Blowfish with passing vectors", "URLBuilder + its test
   file", "Login screen matching iOS LoginView".
 - Local `gradlew` builds and `:core` JUnit tests are synchronous and run on
-  this machine — run them freely as the tight feedback loop. There is no CI
-  to wait on. Never idle-poll anything.
+  this machine — run them freely as the tight feedback loop. They are the
+  pre-commit gate; GitHub is the post-push verdict. Never idle-poll
+  anything.
 
 ---
 
@@ -54,8 +66,10 @@ These rules override everything below. Read them first, apply them always.
   memory across sessions. Format specified below.
 - You own all source files, Gradle build files, `libs.versions.toml`,
   manifest, resources, and tests.
-- Never add a CI workflow (`.github/workflows/*`) or any other workflow
-  file without asking first.
+- `.github/workflows/android-build.yml` exists and is owned (user-approved
+  2026-11-15): Ubuntu runner, runs `:core:test` + `:app:assembleDebug`,
+  uploads the debug APK as an artifact. Its green run is the unit's
+  confirmation of success. Ask before modifying it.
 
 ### `QUEUE.md` format
 
@@ -83,7 +97,7 @@ stays aligned. Never leave it stale.
 
 ---
 
-## Build & Environment (all local — no Mac, no CI)
+## Build & Environment (local gate + GitHub verdict)
 
 - **Workstation**: Linux. The Android toolchain is already installed:
   - SDK: `~/android-sdk` (android-36, build-tools 36.0.0, platform-tools,
@@ -92,17 +106,24 @@ stays aligned. Never leave it stale.
     `org.gradle.java.home` in `gradle.properties` or `JAVA_HOME`)
   - Gradle wrapper (do not require a system gradle)
 - **Local toolbox**: `./gradlew :core:test`, `./gradlew :app:assembleDebug`,
-  `./gradlew :app:assembleRelease`, `git`, `adb` (emulator/device install).
-  That is the entire loop — everything is synchronous and local.
+  `./gradlew :app:assembleRelease`, `git`, `gh`, `adb` (emulator/device
+  install). That is the entire loop — everything is synchronous and local.
+- **The verdict happens on GitHub.** Every push to `main` runs
+  `.github/workflows/android-build.yml` (core tests + debug APK + APK
+  artifact). A green run on the latest commit is the unit's confirmation
+  of success; a red run is the top priority of the next unit. Never wait
+  on it — push and continue.
 - The `:core` module must stay **pure Kotlin/JVM**: no Android SDK imports,
   no OkHttp, no Compose. Only stdlib, kotlinx-serialization and
   kotlinx-coroutines. Its tests run as plain JUnit without Robolectric —
   this is the port's correctness engine, mirroring iOS `swift test`.
 - Device validation: the emulator (`android-36 google_apis`) for smoke
   tests, and the user's real phone for anything user-facing. Never claim a
-  UI change "works" — only the user can confirm that.
+  UI change "works" — only the user can confirm that. Between units, their
+  silence is normal: the GitHub build is the gate.
 - Deliverable: an installable APK (`assembleDebug` for testing,
-  `assembleRelease` for the user's daily install).
+  `assembleRelease` for the user's daily install) — built locally and as a
+  CI artifact.
 
 ---
 
@@ -332,10 +353,13 @@ it is the authority for this port.
 ## Increment Discipline
 
 - A "unit" is the smallest slice that leaves `:core:test` green AND
-  `:app:assembleDebug` green. One unit = one commit (with `QUEUE.md`
-  updated in the same commit).
+  `:app:assembleDebug` green. One unit = one commit, pushed immediately
+  (`QUEUE.md` updated in the same commit), which fires the GitHub build.
 - Work one unit at a time. Do NOT bundle two features into one unit
-  "because they're related". Commit one, start the next immediately.
+  "because they're related". Commit one, push, start the next immediately
+  — the GitHub build runs in the background while you work.
+- Before starting any unit: one quick `gh run list --limit 5` (non-blocking).
+  A FAILED run jumps to the top of the queue; an in-progress run is ignored.
 - When in doubt about scope, ask the user. A quick clarification costs
   seconds; a wrong big increment costs a day.
 
@@ -406,11 +430,18 @@ numbers.
   beginning. Then begin.
 - **No subagents, ever.** Direct tools only.
 - **Commit fast, commit often.** Small commits, one concern each, at
-  every green unit. `QUEUE.md` rides along in the same commit.
+  every green unit. Push right after committing. `QUEUE.md` rides along
+  in the same commit.
+- **Never end a session waiting on CI.** End it with the next unit
+  started — the GitHub build drains in the background.
+- **The user is not a blocker.** A green GitHub build on the latest
+  commit is the unit's confirmation of success. User feedback, when it
+  arrives, jumps the queue; until then, keep working.
 - **When the user sends feedback**: acknowledge, add it to the top of
   `QUEUE.md` under "User Feedback Pending", address it before continuing.
-- **On build failure**: read the failed line, fix the specific error,
-  re-run, commit. Never let a broken tree accumulate other changes.
+- **On build failure** (local or GitHub): read the failed line, fix the
+  specific error, re-run, commit, push, continue. Never let a red build
+  accumulate other changes.
 - **On ambiguity in the protocol or the design**: say so, cite the iOS
   file or reference implementation, and never invent behavior.
 - **Prefer small, verifiable increments.** Show the `:core:test` output
@@ -421,7 +452,10 @@ numbers.
 
 ## Final Reminders
 
-- No subagents. Commit fast, commit often.
+- No subagents. Commit fast, commit often, push, and keep moving — the
+  green GitHub build is your confirmation of success, not the user's
+  reply.
+- Never wait on a build. Push and continue.
 - Never modify `AGENTS.md`. Propose changes in chat instead.
 - Always keep `QUEUE.md` accurate — it is your memory across sessions.
 - Never bump a version.
