@@ -24,6 +24,18 @@ fun interface HttpTransport {
 }
 
 /**
+ * A minimal GET transport (Swift: `HTTPGETTransport`, defined beside the
+ * lyrics provider), so the lyrics / artwork / radio-directory clients
+ * never talk to a HTTP client directly and can be tested with a stub.
+ *
+ * Throws `PandoraTransportError` with the same sanitized reason strings
+ * as `HttpTransport.post`.
+ */
+fun interface HttpGetTransport {
+    suspend fun get(url: String, headers: Map<String, String>): ByteArray
+}
+
+/**
  * The wire request a transport sends — pure assembly, no I/O. A type of
  * its own so the timeout and headers stay unit-testable without a
  * network (the port of `URLSessionTransport.makeRequest`).
