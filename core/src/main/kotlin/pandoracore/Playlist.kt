@@ -123,12 +123,12 @@ data class Track(
         /**
          * Parses the `items` array of a `station.getPlaylist` result.
          * Music entries without `songName` are dropped (pithos' filter);
-         * advertisements are kept (see `entryTrack`); a malformed entry is
+         * advertisements are kept (see `fromEntry`); a malformed entry is
          * skipped, never fatal.
          */
         fun from(result: Map<String, AnyJSON>): List<Track> =
             (result["items"]?.arrayValue ?: emptyList()).mapNotNull { entry ->
-                entry.objectValue?.let { entryTrack(it) }
+                entry.objectValue?.let { fromEntry(it) }
             }
 
         /**
@@ -143,7 +143,7 @@ data class Track(
          * dropping them (a silent drop consumes the impression while never
          * playing anything).
          */
-        private fun entryTrack(entry: Map<String, AnyJSON>): Track? {
+        fun fromEntry(entry: Map<String, AnyJSON>): Track? {
             val adToken = entry["adToken"]?.stringValue
             val title = entry["songName"]?.stringValue ?: entry["title"]?.stringValue
             val trackToken = entry["trackToken"]?.stringValue
