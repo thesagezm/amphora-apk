@@ -1,0 +1,7 @@
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- minSdk 26: adaptive icons only, no legacy densities needed.
+         The full-bleed artwork is the background layer — Android's mask
+         crops the corners exactly like iOS applies its squircle mask. -->
+    <background android:drawable="@drawable/ic_launcher_bg" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>

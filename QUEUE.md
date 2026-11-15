@@ -14,8 +14,7 @@ before porting any view).
 
 ## Current Milestone
 
-**A0** — repo skeleton (Gradle `:core` + `:app`, Compose placeholder,
-manifest, icon, this file). In progress this session.
+**A1** — core protocol port (A0 landed 2026-11-15).
 
 ## Queue (pending, in order)
 
@@ -57,4 +56,19 @@ manifest, icon, this file). In progress this session.
   created (commit `6f92f4a`). User additions: success = green GitHub
   build, no user feedback expected between units, fire-and-continue
   while CI runs → `.github/workflows/android-build.yml` added
-  (`:core:test` + `:app:assembleDebug` + APK artifact). A0 starting.
+  (`:core:test` + `:app:assembleDebug` + APK artifact).
+- 2026-11-15 — **A0 landed**: Gradle skeleton (`:core` pure Kotlin/JVM +
+  `:app` Compose), placeholder MainActivity (dark, iOS-palette colors),
+  manifest (cleartext traffic, media-playback permissions, portrait
+  lock), adaptive launcher icon generated from the iOS AppIcon via
+  `Tools/gen_android_icons.py`, wrapper 8.14.3 copied from
+  speechnotes-android. Local gate green: `:core:test` 2/2 +
+  `:app:assembleDebug` → `Amphora-debug.apk`.
+- **Version-pinning lesson (from speechnotes-android)**: proven pair AGP
+  8.9.1 + Kotlin 2.4.20 + compose BOM 2026.09.00 — but that BOM resolves
+  Compose 1.12.x which needs AGP 9, so the app module carries the
+  speechnotes `resolutionStrategy.force` block pinning Compose to the
+  1.9.x line / material3 1.3.2 / icons 1.7.8. JDK 17 pinned in
+  user-level `~/.gradle/gradle.properties`
+  (`org.gradle.java.home=~/tools/jdk-17.0.13+11`) — system java is 11;
+  CI gets its JDK from setup-java, so nothing JDK-specific is committed.

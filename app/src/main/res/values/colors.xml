@@ -1,0 +1,7 @@
+<resources>
+    <!-- Near-black from the app icon's gradient (BG_BOTTOM in the iOS
+         gen_appicon.py palette) — the launch flash already reads as
+         Amphora's dark-first aesthetic. The full iOS Theme.swift port
+         replaces this in the UI milestones. -->
+    <color name="window_background">#0C081A</color>
+</resources>
