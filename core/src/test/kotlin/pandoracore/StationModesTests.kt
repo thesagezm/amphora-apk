@@ -321,3 +321,147 @@ class StationModesClientTests {
         assertEquals("Deep Cuts", modes.mode(3)?.name)
     }
 }
+
+// MARK: SessionManager facade tests
+
+class StationModesSessionTests {
+
+    private val modesReply = """
+        {"currentModeId":1,"availableModes":[
+          {"modeId":1,"modeName":"My Mix","isModeAvailable":true,
+           "isPremiumOnly":false},
+          {"modeId":5,"modeName":"Artist Only","isModeAvailable":true,
+           "isPremiumOnly":true}]}
+    """.trimIndent()
+
+    private val station = Station(
+        id = "123", token = "S123", name = "Test Station",
+        isShared = false, isQuickMix = false,
+    )
+
+    private fun ok(resultObjectJSON: String) = okJSON(resultObjectJSON)
+
+    private fun partnerOK() = okJSON(
+        """{"partnerId":"77","partnerAuthToken":"P-TOKEN","syncTime":"$SYNC_TIME_MAIN"}""",
+    )
+
+    private fun userOK(isSubscriber: Boolean) =
+        okJSON("""{"userId":"u-1","userAuthToken":"U-TOKEN","isSubscriber":$isSubscriber}""")
+
+    private fun makeManager(
+        legacyResponses: List<Result<ByteArray>>,
+        modesResponses: List<Result<ModesHTTPResponse>>,
+    ): Triple<SessionManager, MockModesTransport, MockCSRF> {
+        val legacy = MockTransport(legacyResponses)
+        val modesTransport = MockModesTransport(modesResponses)
+        val csrf = MockCSRF()
+        val manager = SessionManager(
+            client = LegacyPandoraClient(transport = legacy),
+            modes = PandoraModesClient(transport = modesTransport, csrf = csrf),
+            store = null,
+            now = ::fixedClock,
+        )
+        return Triple(manager, modesTransport, csrf)
+    }
+
+    @Test
+    fun getModesWithoutSessionFails() = kotlinx.coroutines.test.runTest {
+        val (manager, _, _) = makeManager(emptyList(), emptyList())
+        val e = org.junit.Assert.assertThrows(SessionManagerError::class.java) {
+            kotlinx.coroutines.runBlocking { manager.getStationModes(station) }
+        }
+        assertEquals(SessionManagerError.NotAuthenticated, e)
+    }
+
+    @Test
+    fun getModesPassesSessionAndStation() = kotlinx.coroutines.test.runTest {
+        val (manager, modesTransport, _) = makeManager(
+            listOf(partnerOK(), userOK(isSubscriber = false)),
+            listOf(Result.success(ModesHTTPResponse(200, modesReply.toByteArray()))),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val modes = manager.getStationModes(station)
+        assertEquals(2, modes.modes.size)
+        assertEquals(1, modes.currentModeID)
+
+        val call = modesTransport.calls.first()
+        assertEquals("U-TOKEN", call.headers["X-AuthToken"])
+        assertEquals("""{"stationId":"123"}""", call.body.decodeToString())
+    }
+
+    @Test
+    fun premiumModeOnFreeAccountIsRefusedWithoutNetwork() = kotlinx.coroutines.test.runTest {
+        val (manager, modesTransport, _) = makeManager(
+            listOf(partnerOK(), userOK(isSubscriber = false)),
+            emptyList(),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val artistOnly = StationMode(id = 5, name = "Artist Only", isAvailable = true, isPremiumOnly = true)
+        val e = org.junit.Assert.assertThrows(StationModesError::class.java) {
+            kotlinx.coroutines.runBlocking { manager.setStationMode(artistOnly, station) }
+        }
+        assertEquals(StationModesError.NotEntitled, e)
+        // The gate must trip before any HTTP traffic.
+        assertTrue(modesTransport.calls.isEmpty())
+    }
+
+    @Test
+    fun freeAccountCanSetOrdinaryMode() = kotlinx.coroutines.test.runTest {
+        val (manager, _, _) = makeManager(
+            listOf(partnerOK(), userOK(isSubscriber = false)),
+            listOf(Result.success(ModesHTTPResponse(200, modesReply.toByteArray()))),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val deepCuts = StationMode(id = 1, name = "My Mix", isAvailable = true, isPremiumOnly = false)
+        val modes = manager.setStationMode(deepCuts, station, previousModeID = null)
+        assertEquals(1, modes.currentModeID)
+    }
+
+    @Test
+    fun unofferedModeIsRefusedWithoutNetwork() = kotlinx.coroutines.test.runTest {
+        val (manager, modesTransport, _) = makeManager(
+            listOf(partnerOK(), userOK(isSubscriber = true)),
+            emptyList(),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val unoffered = StationMode(id = 9, name = "Elsewhere", isAvailable = false)
+        val e = org.junit.Assert.assertThrows(StationModesError::class.java) {
+            kotlinx.coroutines.runBlocking { manager.setStationMode(unoffered, station) }
+        }
+        assertEquals(StationModesError.ModeNotOffered, e)
+        assertTrue(modesTransport.calls.isEmpty())
+    }
+
+    @Test
+    fun unauthorizedTriggersReLoginThenRetry() = kotlinx.coroutines.test.runTest {
+        // First getModes: 401 → csrf refresh → 401 again → the client gives
+        // up with .unauthorized → SessionManager re-logins (legacy partner +
+        // user fixtures 3 and 4) → retries getModes → 200.
+        val (manager, modesTransport, csrf) = makeManager(
+            listOf(
+                partnerOK(), userOK(isSubscriber = false),
+                partnerOK(), userOK(isSubscriber = false),
+            ),
+            listOf(
+                Result.success(ModesHTTPResponse(401, ByteArray(0))),
+                Result.success(ModesHTTPResponse(401, ByteArray(0))),
+                Result.success(ModesHTTPResponse(200, modesReply.toByteArray())),
+            ),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val modes = manager.getStationModes(station)
+        assertEquals(1, modes.currentModeID)
+
+        val calls = modesTransport.calls
+        assertEquals(3, calls.size)
+        assertEquals(1, csrf.refreshCount)
+        // The retried call carries the re-issued session token.
+        assertEquals("U-TOKEN", calls.first().headers["X-AuthToken"])
+        assertEquals("U-TOKEN", calls.last().headers["X-AuthToken"])
+    }
+}

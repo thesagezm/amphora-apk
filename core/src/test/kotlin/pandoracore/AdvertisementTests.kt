@@ -16,6 +16,7 @@
 package pandoracore
 
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -161,5 +162,174 @@ class JSONValueArrayTests {
     fun emptyArrayEncodes() {
         val body = JSONValue.encoded(mapOf("adTrackingTokens" to JSONValue.Array(emptyList())))
         assertEquals("""{"adTrackingTokens":[]}""", body.decodeToString())
+    }
+}
+
+// MARK: SessionManager facade
+
+class SessionManagerAdTests {
+
+    private fun ok(resultObjectJSON: String) = okJSON(resultObjectJSON)
+    private fun partnerOK() = okJSON("""{"partnerId":"77","partnerAuthToken":"P-TOKEN","syncTime":"$SYNC_TIME_MAIN"}""")
+
+    private val metadataReply = """
+        {"title":"Resolved Ad","companyName":"Brand Co.",
+         "adTrackingTokens":["tok-1","tok-2"],
+         "audioUrl":"https://audio.example/resolved.mp3"}
+    """.trimIndent()
+
+    private val adTrack = Track(
+        trackToken = "ad.ADT-1",
+        title = "Big Brand Ad",
+        artist = "Brand Co.",
+        album = "",
+        duration = 0,
+        stationId = "123",
+        isAdvertisement = true,
+        adToken = "ADT-1",
+    )
+
+    private fun makeManager(
+        legacyResponses: List<Result<ByteArray>>,
+    ): Pair<SessionManager, MockTransport> {
+        val legacy = MockTransport(legacyResponses)
+        val manager = SessionManager(
+            client = LegacyPandoraClient(transport = legacy),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = null,
+            now = ::fixedClock,
+        )
+        return manager to legacy
+    }
+
+    @Test
+    fun getAdMetadataSendsPydoraParams() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK(), ok(metadataReply)),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val ad = manager.getAdMetadata(adToken = "ADT-1")
+        assertEquals("Resolved Ad", ad.title)
+        assertEquals(listOf("tok-1", "tok-2"), ad.trackingTokens)
+        assertEquals("https://audio.example/resolved.mp3", ad.audioURL)
+
+        val request = transport.requests.last()
+        assertTrue(request.url.contains("method=ad.getAdMetadata"))
+        val body = decryptedBody(request)
+        assertTrue(body.contains("\"adToken\":\"ADT-1\""))
+        assertTrue(body.contains("\"returnAdTrackingTokens\":true"))
+        assertTrue(body.contains("\"supportAudioAds\":true"))
+    }
+
+    @Test
+    fun registerAdSendsTokensAndStation() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK(), ok("{}")),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        manager.registerAd(stationId = "123", trackingTokens = listOf("tok-1", "tok-2"))
+
+        val request = transport.requests.last()
+        assertTrue(request.url.contains("method=ad.registerAd"))
+        val body = decryptedBody(request)
+        assertTrue(body.contains("\"adTrackingTokens\":[\"tok-1\",\"tok-2\"]"))
+        assertTrue(body.contains("\"stationId\":\"123\""))
+    }
+
+    @Test
+    fun registerAdRefusesEmptyTokensWithoutNetwork() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK()),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val e = org.junit.Assert.assertThrows(AdvertisementError::class.java) {
+            kotlinx.coroutines.runBlocking {
+                manager.registerAd(stationId = "123", trackingTokens = emptyList())
+            }
+        }
+        assertEquals(AdvertisementError.MissingTrackingTokens, e)
+        // Only the two login calls ever hit the transport.
+        assertEquals(2, transport.requests.size)
+    }
+
+    @Test
+    fun prepareAdResolvesAndRegisters() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK(), ok(metadataReply), ok("{}")),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val metadata = manager.prepareAd(adTrack)
+        assertEquals("ADT-1", metadata.adToken)
+        assertEquals(listOf("tok-1", "tok-2"), metadata.trackingTokens)
+
+        val requests = transport.requests
+        assertEquals(4, requests.size)
+        assertTrue(requests.last().url.contains("method=ad.registerAd"))
+    }
+
+    @Test
+    fun prepareAdUsesTrackStationWhenNotOverridden() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK(), ok(metadataReply), ok("{}")),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        manager.prepareAd(adTrack)
+
+        val registerBody = decryptedBody(transport.requests.last())
+        assertTrue(registerBody.contains("\"stationId\":\"123\""))
+    }
+
+    @Test
+    fun prepareAdSkipsRegistrationWithoutTrackingTokens() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(partnerOK(), userOK(), ok("""{"title":"No tokens"}""")),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val metadata = manager.prepareAd(adTrack)
+        assertEquals("No tokens", metadata.title)
+
+        // partner + user + metadata only — no registerAd call (pydora
+        // prepare_playback skips registration the same way).
+        assertEquals(3, transport.requests.size)
+    }
+
+    @Test
+    fun prepareAdSurvivesRegisterFailure() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(
+            listOf(
+                partnerOK(), userOK(), ok(metadataReply),
+                Result.failure(PandoraTransportError("register exploded")),
+            ),
+        )
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        // Deliberate deviation from pydora: a failed impression
+        // registration must not block playback.
+        val metadata = manager.prepareAd(adTrack)
+        assertEquals("Resolved Ad", metadata.title)
+
+        assertEquals(4, transport.requests.size)
+    }
+
+    @Test
+    fun prepareAdRequiresAnAdvertisement() = kotlinx.coroutines.test.runTest {
+        val (manager, transport) = makeManager(listOf(partnerOK(), userOK()))
+        manager.login(username = "me@example.com", password = "hunter2")
+
+        val song = Track(
+            trackToken = "TT-1", title = "Song", artist = "Artist", album = "",
+            duration = 200, stationId = "123",
+        )
+        val e = org.junit.Assert.assertThrows(AdvertisementError::class.java) {
+            kotlinx.coroutines.runBlocking { manager.prepareAd(song) }
+        }
+        assertEquals(AdvertisementError.NotAnAdvertisement, e)
+        assertEquals(2, transport.requests.size)
     }
 }

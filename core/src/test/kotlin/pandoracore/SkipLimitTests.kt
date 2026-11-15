@@ -22,6 +22,8 @@
 
 package pandoracore
 
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,5 +79,76 @@ class SkipLimitTests {
     fun playlistEndedAccessorDistinguishesTheTwoSignals() {
         assertTrue(PlaylistError.SkipLimitReached(playlistEnded = true).playlistEnded)
         assertFalse(PlaylistError.SkipLimitReached(playlistEnded = false).playlistEnded)
+    }
+
+    // MARK: The getPlaylist mapping (SessionManager)
+
+    /** A restored session — no login traffic, so the first response is
+     *  the playlist request's. */
+    private fun makeManager(transport: MockTransport): SessionManager {
+        val store = InMemorySessionStore(record = cachedRecord(token = "U-LISTED"))
+        return SessionManager(
+            client = LegacyPandoraClient(transport = transport),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = store,
+            now = ::fixedClock,
+        )
+    }
+
+    private fun makeStation() = Station(
+        id = "1", token = "S1", name = "Deep Cuts",
+        isShared = false, isQuickMix = false,
+    )
+
+    @Test
+    fun getPlaylistMapsDailySkipLimitToTypedError() = kotlinx.coroutines.test.runTest {
+        val transport = MockTransport(listOf(failJSON(1004, "DAILY_SKIP_LIMIT_REACHED")))
+        val subject = makeManager(transport)
+        assertTrue(subject.restore())
+
+        val e = org.junit.Assert.assertThrows(PlaylistError::class.java) {
+            kotlinx.coroutines.runBlocking { subject.getPlaylist(makeStation()) }
+        }
+        assertTrue(e is PlaylistError.SkipLimitReached)
+        assertFalse((e as PlaylistError.SkipLimitReached).playlistEnded)
+    }
+
+    @Test
+    fun getPlaylistMapsPlaylistEndToTypedError() = kotlinx.coroutines.test.runTest {
+        val transport = MockTransport(listOf(failJSON(1004, "PLAYLIST_END")))
+        val subject = makeManager(transport)
+        assertTrue(subject.restore())
+
+        val e = org.junit.Assert.assertThrows(PlaylistError::class.java) {
+            kotlinx.coroutines.runBlocking { subject.getPlaylist(makeStation()) }
+        }
+        assertTrue(e is PlaylistError.SkipLimitReached)
+        assertTrue((e as PlaylistError.SkipLimitReached).playlistEnded)
+    }
+
+    @Test
+    fun otherPlaylistFaultsStayAPandoraAPIError() = kotlinx.coroutines.test.runTest {
+        val transport = MockTransport(listOf(failJSON(1039, "Too many playlist requests")))
+        val subject = makeManager(transport)
+        assertTrue(subject.restore())
+
+        val e = org.junit.Assert.assertThrows(PandoraAPIError::class.java) {
+            kotlinx.coroutines.runBlocking { subject.getPlaylist(makeStation()) }
+        }
+        assertEquals(1039, e.code)
+        assertFalse(e.isSkipLimitReached)
+    }
+
+    @Test
+    fun skipLimitIsNotRetried() = kotlinx.coroutines.test.runTest {
+        // The request must be made exactly once: the server refuses it,
+        // and hammering it would only deepen the limit. (Compare with
+        // the 1001 contract, where one replay is correct.)
+        val transport = MockTransport(listOf(failJSON(1004, "DAILY_SKIP_LIMIT_REACHED")))
+        val subject = makeManager(transport)
+        assertTrue(subject.restore())
+
+        runCatching { kotlinx.coroutines.runBlocking { subject.getPlaylist(makeStation()) } }
+        assertEquals(1, transport.requests.size)
     }
 }

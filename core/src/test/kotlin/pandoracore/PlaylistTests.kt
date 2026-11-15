@@ -253,6 +253,71 @@ class PlaylistTests {
         assertTrue(playlist.isExpired(now = fetched.plusSeconds(3_600)))
     }
 
+    // MARK: Request shape (SessionManager)
+
+    @Test
+    fun getPlaylistSendsPithosParamsAndDecodesItems() = kotlinx.coroutines.test.runTest {
+        val store = InMemorySessionStore(record = cachedRecord(token = "U-LISTED"))
+        val transport = MockTransport(
+            listOf(
+                okJSON(
+                    """
+                    {
+                      "items": [
+                        {
+                          "songName": "Song",
+                          "artistName": "Artist",
+                          "trackToken": "TT",
+                          "stationId": "7",
+                          "trackLength": 100,
+                          "audioUrlMap": {
+                            "highQuality": {
+                              "encoding": "aacplus",
+                              "bitrate": "64",
+                              "audioUrl": "https://stream"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+            ),
+        )
+        val manager = SessionManager(
+            client = LegacyPandoraClient(transport = transport),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = store,
+            now = ::fixedClock,
+        )
+        assertTrue(manager.restore())
+
+        val station = Station(
+            id = "7", token = "ST-7", name = "Rock", isShared = false, isQuickMix = false,
+        )
+        val playlist = manager.getPlaylist(station)
+
+        assertEquals(1, playlist.tracks.size)
+        assertEquals("Song", playlist.tracks.first()?.title)
+        assertEquals("https://stream", playlist.tracks.first()?.streamURL)
+
+        val requests = transport.requests
+        assertEquals(1, requests.size)
+        val request = requests.first()
+        assertTrue(request.url.contains("method=station.getPlaylist"))
+        assertTrue(request.url.contains("auth_token=U-LISTED"))
+
+        val hex = request.body.decodeToString()
+        val plain = PandoraCrypto.decryptFromHex(hex, PandoraAPI.encryptKey)
+        val body = plain.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+        assertTrue(body, body.contains("\"stationToken\":\"ST-7\""))
+        assertTrue(body, body.contains("\"includeTrackLength\":true"))
+        assertTrue(
+            body,
+            body.contains("\"additionalAudioUrl\":\"HTTP_32_AACPLUS,HTTP_128_MP3\""),
+        )
+    }
+
     // MARK: Helpers
 
     private fun envelopeResult(objectJSON: String): Map<String, AnyJSON> {

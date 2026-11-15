@@ -12,7 +12,9 @@
 
 package pandoracore
 
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -93,6 +95,45 @@ class MusicSearchTests {
     fun emptyResultIsEmptyList() {
         val hits = MusicSearchResult.from(envelopeResult("{}"))
         assertEquals(emptyList<MusicSearchResult>(), hits)
+    }
+
+    // MARK: Request shape (SessionManager)
+
+    @Test
+    fun searchSendsPithosParamsUnderRestoredSession() = kotlinx.coroutines.test.runTest {
+        // Restore-from-store path: no login traffic, exactly one search call.
+        val store = InMemorySessionStore(record = cachedRecord(token = "U-TOKEN"))
+        val transport = MockTransport(
+            listOf(
+                okJSON(
+                    """{"artists":[{"artistName":"Weezer","musicToken":"m-1","score":91}],"songs":[],"genreStations":[]}""",
+                ),
+            ),
+        )
+        val manager = SessionManager(
+            client = LegacyPandoraClient(transport = transport),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = store,
+            now = ::fixedClock,
+        )
+        assertTrue(manager.restore())
+
+        val hits = manager.search("weezer")
+        assertEquals(listOf("m-1"), hits.map { it.musicToken })
+
+        val requests = transport.requests
+        assertEquals(1, requests.size)
+        val request = requests.first()
+        assertTrue(request.url.contains("method=music.search"))
+        assertTrue(request.url.contains("auth_token=U-TOKEN"))
+
+        // Encrypted body: pithos' exact param set, NUL-pad trimmed.
+        val hex = request.body.decodeToString()
+        val plain = PandoraCrypto.decryptFromHex(hex, PandoraAPI.encryptKey)
+        val body = plain.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+        assertTrue(body, body.contains("\"includeGenreStations\":true"))
+        assertTrue(body, body.contains("\"includeNearMatches\":true"))
+        assertTrue(body, body.contains("\"searchText\":\"weezer\""))
     }
 
     // MARK: Helpers

@@ -81,7 +81,23 @@ class StationTests {
         assertEquals("station list missing stations array", e.detail)
     }
 
+    @Test
+    fun stationListRequiresSession() = kotlinx.coroutines.test.runTest {
+        val subject = makeManager()
+        val e = org.junit.Assert.assertThrows(SessionManagerError::class.java) {
+            kotlinx.coroutines.runBlocking { subject.getStationList() }
+        }
+        assertEquals(SessionManagerError.NotAuthenticated, e)
+    }
+
     // MARK: Helpers
+
+    private fun makeManager() = SessionManager(
+        client = LegacyPandoraClient(transport = MockTransport(emptyList())),
+        modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+        store = null,
+        now = ::fixedClock,
+    )
 
     private fun result(objectJSON: String): Map<String, AnyJSON> {
         val envelope = """{"stat":"ok","result":$objectJSON}""".toByteArray()

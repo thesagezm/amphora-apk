@@ -14,7 +14,9 @@
 
 package pandoracore
 
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -106,6 +108,74 @@ class GenreStationsTests {
     fun emptyCategoriesIsAllowed() {
         val catalog = GenreStations.from(parse("""{"categories": []}"""))
         assertTrue(catalog.categories.isEmpty())
+    }
+
+    // MARK: SessionManager facade
+
+    private fun ok(resultObjectJSON: String) = okJSON(resultObjectJSON)
+
+    private fun partnerOK() = okJSON(
+        """{"partnerId":"77","partnerAuthToken":"P-TOKEN","syncTime":"$SYNC_TIME_MAIN"}""",
+    )
+
+    private fun userOK() = okJSON("""{"userId":"u-1","userAuthToken":"U-TOKEN","isSubscriber":false}""")
+
+    @Test
+    fun getGenreStationsCallsBareAndDecodes() = kotlinx.coroutines.test.runTest {
+        val transport = MockTransport(
+            listOf(
+                partnerOK(),
+                userOK(),
+                ok(
+                    """
+                    {"categories": [
+                        {"categoryName": "Country", "stations": [
+                            {"stationToken": "G300", "stationName": "Country Hits",
+                             "categoryName": "Country"}
+                        ]}
+                    ]}
+                    """.trimIndent(),
+                ),
+            ),
+        )
+        val subject = SessionManager(
+            client = LegacyPandoraClient(transport = transport),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = null,
+            now = ::fixedClock,
+        )
+
+        subject.login(username = "me@example.com", password = "hunter2")
+        val categories = subject.getGenreStations()
+
+        assertEquals(1, categories.size)
+        assertEquals("G300", categories[0].stations[0].token)
+        assertEquals("Country Hits", categories[0].stations[0].name)
+
+        // The method takes no parameters — request 3 goes out bare
+        // (authenticated calls carry more query params after `method=`,
+        // so match on the method pair, not the suffix).
+        val requests = transport.requests
+        assertEquals(3, requests.size)
+        val genreRequest = requests.last()
+        assertTrue(genreRequest.url.contains("method=station.getGenreStations"))
+    }
+
+    @Test
+    fun getGenreStationsWithoutSessionThrows() = kotlinx.coroutines.test.runTest {
+        val transport = MockTransport(emptyList())
+        val subject = SessionManager(
+            client = LegacyPandoraClient(transport = transport),
+            modes = PandoraModesClient(transport = MockModesTransport(emptyList()), csrf = MockCSRF()),
+            store = null,
+            now = ::fixedClock,
+        )
+
+        val e = org.junit.Assert.assertThrows(SessionManagerError::class.java) {
+            kotlinx.coroutines.runBlocking { subject.getGenreStations() }
+        }
+        assertEquals(SessionManagerError.NotAuthenticated, e)
+        assertTrue(transport.requests.isEmpty())
     }
 
     // MARK: Helpers
