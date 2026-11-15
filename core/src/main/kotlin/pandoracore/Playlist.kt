@@ -66,7 +66,7 @@ data class Track(
     val title: String,
     val artist: String,
     val album: String,
-    val artworkUrl: String?,
+    val artworkUrl: String? = null,
     /** Track length in seconds (`trackLength`, with `includeTrackLength`). */
     val duration: kotlin.Int,
     val stationId: String,
@@ -74,25 +74,25 @@ data class Track(
      * Pandora's `songRating`: 1 = thumbs up, -1 = thumbs down,
      * 0 = unrated (pithos `RATE_LOVE` / `RATE_BAN` / `RATE_NONE`).
      */
-    val rating: Rating,
+    val rating: Rating = Rating.none,
     /** Pandora's playback gain hint (`trackGain`) — informational only. */
-    val gain: Double,
+    val gain: Double = 0.0,
     /**
      * Ads carry an `adToken`; they are not music (pydora `is_ad`).
      * Playlist ad entries are usually stubs without audio — resolve them
      * with `SessionManager.getAdMetadata` before playing.
      */
-    val isAdvertisement: Boolean,
+    val isAdvertisement: Boolean = false,
     /**
      * The ad token of an advertisement entry, null for music tracks
      * (pydora `AdItem.ad_token`; keys the resolve/register calls).
      */
-    val adToken: String?,
+    val adToken: String? = null,
     /**
      * Available streams, best first (highest quality bucket, then
      * bitrate). Empty when the server sent no playable URL.
      */
-    val variants: List<AudioVariant>,
+    val variants: List<AudioVariant> = emptyList(),
 ) {
     enum class Rating(val raw: kotlin.Int) {
         banned(-1),
