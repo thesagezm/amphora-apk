@@ -23,18 +23,55 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import dev.personal.amphora.store.AmphoraStore
 import dev.personal.amphora.store.ArtworkThemeController
 import dev.personal.amphora.store.AuthPhase
+import dev.personal.amphora.support.AppLog
 
 @Composable
 fun RootView(store: AmphoraStore) {
     val theme = Theme.tokens()
+
+    // Android 13+ gates notifications behind a runtime permission; the
+    // media notification lives there, so the ask goes out once the user
+    // is actually signed in (a music app asking before showing a single
+    // station would be noise). The system itself no-ops the request
+    // when already granted or permanently denied, so a once-per-session
+    // ask never nags. iOS has no equivalent — that is the port delta.
+    var notificationsAskedThisSession by rememberSaveable { mutableStateOf(false) }
+    val notificationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notificationsAskedThisSession = true
+        AppLog.info(
+            "notification permission " +
+                (if (granted) "granted" else "denied"),
+            AppLog.Category.app,
+        )
+    }
+
+    LaunchedEffect(store.authPhase) {
+        if (store.authPhase == AuthPhase.signedIn &&
+            !notificationsAskedThisSession &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            notificationsAskedThisSession = true
+            notificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     LaunchedEffect(Unit) {
         // The ambient artwork theme attaches to the player once (the

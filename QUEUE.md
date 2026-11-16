@@ -15,15 +15,38 @@ before porting any view).
 ## Current Milestone
 
 **A4** — playback (the "it works" milestone). User said keep moving
-2026-11-16 while they test A3 on their phone in parallel. **A4.1–A4.4
-landed**; A4.5 (robustness pass) is the last A4 unit.
+2026-11-16 while they test A3 in parallel; **A4.1–A4.5 all landed**
+(milestone code-complete). Per AGENTS.md, A5 does not begin until the
+user confirms A4 on their phone (the Definition-of-Demo gate: tap →
+music within ~2s → media notification → thumbs → skip → prefetch →
+survives backgrounding) or says keep moving again.
 
 ## Queue (pending, in order)
 
-- **A4.5 — robustness pass**: error states review, session-expiry
-  during playlist fetch, notification polish (notification channel
-  name, POST_NOTIFICATIONS grant flow on Android 13+), QUEUE deltas;
-  possibly the `SleepTimerSheet`-shape groundwork if small.
+- **A4 verification (user)**: install the CI APK artifact (or
+  Waydroid once unblocked) and run the demo checklist — launch →
+  auto-login → station list → tap a station → audio within ~2s →
+  media notification with metadata → lock-screen controls → skip →
+  next-track prefetch (Up Next fills) → pause/resume → mini-player →
+  full player (scrubber, volume, quality chip, artwork ambient
+  theme) → headphones unplug pauses → no crashes. Report failures;
+  silence is not a blocker.
+- **BLOCKED on user action — Waydroid smoke test**: the container
+  service needs root (`sudo systemctl start waydroid-container`, or
+  however they normally start Waydroid); agent-side `sudo` requires a
+  password. Once the container runs, resume: `waydroid session start`
+  → `adb connect` (or `waydroid app install Amphora-debug.apk`) →
+  launch → login screen → wrong-password error copy → real login →
+  signed-in → station list renders → then the A4 checklist above.
+  Per user directive (2026-11-16): Waydroid ONLY, never an emulator.
+- **A3/A2 verification owed** (user phone): wrong-password copy,
+  station list, reorder, create/rename/delete, tune sheet.
+- **A5 — feedback / bookmarks / history / sleep timer** (next
+  milestone, gated on A4 confirmation): thumbs with reasons
+  (FeedbackBar), sleep-song, bookmarks, RecentsView + the Home
+  toolbar button, sleep timer sheet, skip-limit UX polish, the
+  onTrackChanged observers documented in AmphoraStore (rating reset,
+  history record) + NowPlayingView's hidden menu items.
 - **BLOCKED on user action — Waydroid smoke test**: the container
   service needs root (`sudo systemctl start waydroid-container`, or
   however they normally start Waydroid); agent-side `sudo` requires a
@@ -77,6 +100,16 @@ landed**; A4.5 (robustness pass) is the last A4 unit.
 
 ## Log
 
+- 2026-11-16 — **A4.5 landed — robustness pass, A4 code-complete**:
+  `PlaybackService` grows a named notification channel ("playback" /
+  "Playback" — the provider builder takes a @StringRes channel name,
+  noted) + RootView requests POST_NOTIFICATIONS once per signed-in
+  session on Android 13+ (targetSdk 36 gates the media notification
+  behind it; the launcher no-ops on grant/permanent denial — no prefs
+  flag needed; iOS has no equivalent, documented delta). Session-expiry
+  during playlist fetch was already covered by A4.2's record() path
+  (dead session → player.stop + return to sign-in). Local gate green:
+  `:core:test` + `:app:assembleDebug`.
 - 2026-11-16 — **A4.4 landed — the player UI** (MiniPlayer +
   NowPlayingView + PlayerScrubber + the ambient theme, ported
   view-for-view): `ui/MiniPlayer.kt` (card with the top-edge progress

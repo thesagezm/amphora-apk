@@ -98,6 +98,15 @@ class PlaybackService : MediaSessionService() {
             // Tapping the media notification brings the app up.
             .setSessionActivity(getActivityPendingIntent())
             .build()
+
+        // A named channel of our own — the default provider's generic
+        // channel reads as system noise in Android's settings.
+        setMediaNotificationProvider(
+            androidx.media3.session.DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId("playback")
+                .setChannelName(dev.personal.amphora.R.string.notification_channel_playback)
+                .build(),
+        )
     }
 
     private fun getActivityPendingIntent(): PendingIntent =

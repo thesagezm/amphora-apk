@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Amphora</string>
+    <!-- The media notification channel (A4: PlaybackService). -->
+    <string name="notification_channel_playback">Playback</string>
 </resources>
