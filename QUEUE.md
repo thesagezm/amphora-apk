@@ -19,11 +19,10 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3.4 (next)**: `AddStationView` + `BrowseStationsSheet` + genre
-  stations + toolbar add button + browse row + empty-state Add button
-  (store: create/createGenre/loadGenres intents).
-- **A3.5**: `TuneStationSheet` + the Tune context item + station
-  search (store: search intent; `SessionManager.search` exists).
+- **A3.5 (next)**: `TuneStationSheet` + the Tune context item + station
+  search polish (store: search intent landed in A3.4;
+  `SessionManager.search` exists; TuneStationSheet reads
+  `SessionManager.getStationModes`).
 - **A3 shipped-deltas** (each documented in its file header):
   row taps start playback — A4 wiring (rows are long-press-only until
   then, so no dead tap); recents toolbar button — A5 (with
@@ -69,6 +68,22 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **A3.4 landed**: store gains the search/create surface
+  (`searchResults`/`isSearching`/`genreCategories`/`isLoadingGenres`/
+  `stationCreatedTick`, intents SearchStations/CreateStation/
+  CreateGenreStation/LoadGenreStations; search cancel-supersede via
+  Job cancel + CancellationException rethrow, local append deduped by
+  id like pithos, tick bump = the sheets' dismiss signal) +
+  `ui/AddStationView.kt` (search field with the 350 ms
+  LaunchedEffect debounce, ≥2-chars policy, kind icons mic/note/radio,
+  song captions from subtitle, plus/spinner on rows, banner +
+  prompts) + `ui/BrowseStationsSheet.kt` (category list → internal
+  drill-down with BackHandler, tick-dismiss, error/empty states) +
+  StationsView grows the toolbar Add button, the Browse Pandora
+  Stations row, the empty-state Add button, and the two
+  ModalBottomSheet hosts; `RowPressableButton` gains `strong` (the
+  fuller `PressableButtonStyle` dip where iOS chose it). Local gate
+  green: 372/372 + APK.
 - 2026-11-16 — **A3.3 landed**: `ui/TransportGlyph.kt` (full Canvas
   port of the drawn transport family — play/pause/next/stop/back15
   with the rounded-polygon quadratic-corner math one-for-one;

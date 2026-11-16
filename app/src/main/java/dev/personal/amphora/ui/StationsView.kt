@@ -60,11 +60,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Warning
@@ -75,13 +78,16 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -108,15 +114,19 @@ import dev.personal.amphora.store.AmphoraStore
 import pandoracore.Station
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun StationsView(store: AmphoraStore) {
     val theme = Theme.tokens()
 
     // iOS `@State` per concern: rename target + text, delete target,
-    // edit-mode reorder (tune target arrives with A3.5's sheet).
+    // edit-mode reorder, sheet presentation (tune target arrives with
+    // A3.5's sheet).
     var renameTarget by remember { mutableStateOf<Station?>(null) }
     var renameText by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<Station?>(null) }
     var isEditingOrder by remember { mutableStateOf(false) }
+    var isAddingStation by remember { mutableStateOf(false) }
+    var isBrowsingStations by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -140,6 +150,16 @@ fun StationsView(store: AmphoraStore) {
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(
+                    onClick = { isAddingStation = true },
+                    modifier = Modifier.semantics { contentDescription = "Add station" },
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = null,
+                        tint = theme.accent,
+                    )
+                }
+                IconButton(
                     onClick = { isEditingOrder = !isEditingOrder },
                     modifier = Modifier.semantics {
                         contentDescription = "Reorder stations"
@@ -156,10 +176,13 @@ fun StationsView(store: AmphoraStore) {
                 store.stations.isEmpty() && store.isLoadingStations -> LoadingState()
                 store.stations.isEmpty() && store.lastErrorMessage != null ->
                     ErrorState(store)
-                store.stations.isEmpty() -> EmptyState()
+                store.stations.isEmpty() -> EmptyState(
+                    onAdd = { isAddingStation = true },
+                )
                 else -> StationList(
                     store = store,
                     isEditingOrder = isEditingOrder,
+                    onBrowse = { isBrowsingStations = true },
                     onRename = { station ->
                         renameText = station.name
                         renameTarget = station
@@ -202,6 +225,26 @@ fun StationsView(store: AmphoraStore) {
             onCancel = { deleteTarget = null },
         )
     }
+
+    // Sheets (iOS `.sheet(isPresented:)` — full-height modal cards).
+    if (isAddingStation) {
+        ModalBottomSheet(
+            onDismissRequest = { isAddingStation = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = theme.background,
+        ) {
+            AddStationView(store = store, onDismiss = { isAddingStation = false })
+        }
+    }
+    if (isBrowsingStations) {
+        ModalBottomSheet(
+            onDismissRequest = { isBrowsingStations = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = theme.background,
+        ) {
+            BrowseStationsSheet(store = store, onDismiss = { isBrowsingStations = false })
+        }
+    }
 }
 
 // MARK: States
@@ -228,10 +271,9 @@ private fun LoadingState() {
     }
 }
 
-/** iOS: `ContentUnavailableView` — "No stations yet". The Add Station
- *  action joins when AddStationView lands (A3.4). */
+/** iOS: `ContentUnavailableView` — "No stations yet" + Add Station. */
 @Composable
-private fun EmptyState() {
+private fun EmptyState(onAdd: () -> Unit) {
     val theme = Theme.tokens()
     Column(
         modifier = Modifier
@@ -261,6 +303,16 @@ private fun EmptyState() {
             color = secondaryColor(theme),
             textAlign = TextAlign.Center,
         )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = onAdd,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = theme.accent,
+                contentColor = theme.accentGlyph,
+            ),
+        ) {
+            Text("Add Station")
+        }
     }
 }
 
@@ -316,6 +368,7 @@ private fun ErrorState(store: AmphoraStore) {
 private fun StationList(
     store: AmphoraStore,
     isEditingOrder: Boolean,
+    onBrowse: () -> Unit,
     onRename: (Station) -> Unit,
     onDelete: (Station) -> Unit,
 ) {
@@ -342,6 +395,15 @@ private fun StationList(
             // something has played (A4 populates `lastStationId`).
             item(key = "hero") {
                 Hero(store)
+            }
+            // Landing-page entry to Pandora's featured stations (user
+            // request: "landing page only shows my stations … popular
+            // pandora created main stations as well"). Opens
+            // BrowseStationsSheet.
+            item(key = "browse-row") {
+                BrowseRow(
+                    onOpen = onBrowse,
+                )
             }
             // The account-level explicit-content badge — Pandora's
             // explicit filter is an **account** switch, not a per-track
@@ -657,6 +719,66 @@ private fun ErrorBanner(store: AmphoraStore, modifier: Modifier = Modifier) {
                 imageVector = Icons.Rounded.Close,
                 contentDescription = "Dismiss error",
                 tint = labelColor(theme),
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
+}
+
+// MARK: Browse row
+
+/**
+ * Landing-page entry to Pandora's featured stations: the 44dp accent
+ * tile, the title + caption, chevron. Opens `BrowseStationsSheet`.
+ */
+@Composable
+private fun BrowseRow(onOpen: () -> Unit) {
+    val theme = Theme.tokens()
+    RowPressableButton(
+        onClick = onOpen,
+        modifier = Modifier
+            .fillMaxWidth()
+            .amphoraCardRow(theme),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(theme.accent.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Radio,
+                    contentDescription = null,
+                    tint = theme.accent,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Browse Pandora Stations",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = labelColor(theme),
+                    maxLines = 1,
+                )
+                Text(
+                    text = "Popular stations made by Pandora",
+                    fontSize = 12.sp,
+                    color = secondaryColor(theme),
+                    maxLines = 1,
+                )
+            }
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = secondaryColor(theme).copy(alpha = 0.5f),
                 modifier = Modifier.size(14.dp),
             )
         }

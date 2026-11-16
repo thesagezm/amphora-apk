@@ -137,6 +137,26 @@ class AmphoraStore {
             return stations.firstOrNull { it.id == id }
         }
 
+    // MARK: Observable state (search & create)
+
+    var searchResults: List<pandoracore.MusicSearchResult> by mutableStateOf(emptyList())
+        private set
+    var isSearching: Boolean by mutableStateOf(false)
+        private set
+    /** Pandora's featured stations by browse category — null until
+     *  first fetched this session; the browse sheet opens instantly on
+     *  repeat visits; a relaunch refetches. */
+    var genreCategories: List<pandoracore.GenreCategory>? by mutableStateOf(null)
+        private set
+    var isLoadingGenres: Boolean by mutableStateOf(false)
+        private set
+    /** Bumped on every successful station creation — the sheets' signal
+     *  to dismiss (a fire-and-forget intent can't return success). */
+    var stationCreatedTick: Int by mutableStateOf(0)
+        private set
+
+    private var searchJob: kotlinx.coroutines.Job? = null
+
     // MARK: Intents
 
     /**
@@ -154,6 +174,12 @@ class AmphoraStore {
                 launchIntent { renameStation(intent.station, intent.newName) }
             is Intent.DeleteStation -> launchIntent { deleteStation(intent.station) }
             is Intent.MoveStation -> moveStation(from = intent.from, to = intent.to)
+            is Intent.SearchStations -> search(intent.query)
+            is Intent.CreateStation ->
+                launchIntent { createStation(musicToken = intent.result.musicToken) }
+            is Intent.CreateGenreStation ->
+                launchIntent { createStation(musicToken = intent.station.token) }
+            is Intent.LoadGenreStations -> launchIntent { loadGenreStations() }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -165,6 +191,10 @@ class AmphoraStore {
         data class RenameStation(val station: pandoracore.Station, val newName: String) : Intent()
         data class DeleteStation(val station: pandoracore.Station) : Intent()
         data class MoveStation(val from: Int, val to: Int) : Intent()
+        data class SearchStations(val query: String) : Intent()
+        data class CreateStation(val result: pandoracore.MusicSearchResult) : Intent()
+        data class CreateGenreStation(val station: pandoracore.GenreStation) : Intent()
+        data object LoadGenreStations : Intent()
         data object DismissError : Intent()
     }
 
@@ -349,6 +379,83 @@ class AmphoraStore {
         ids.add(target, moved)
         updatePreferences { it.copy(stationOrder = it.stationOrder.setOrder(ids)) }
         stations = preferences.stationOrder.apply(stations)
+    }
+
+    // MARK: Search & create
+
+    /**
+     * Debounced callers land here (the view waits out the typing pause).
+     * Queries under 2 chars clear results instead of hitting the API —
+     * never hammer the endpoint. A newer query cancels the in-flight one.
+     */
+    private fun search(rawQuery: String) {
+        searchJob?.cancel()
+        val query = rawQuery.trim()
+        if (query.length < 2) {
+            searchResults = emptyList()
+            isSearching = false
+            return
+        }
+        isSearching = true
+        searchJob = intentScope.launch {
+            try {
+                val hits = session.search(query)
+                searchResults = hits
+                isSearching = false
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                // Superseded by a newer query — that one owns the state now.
+                throw error
+            } catch (error: Exception) {
+                searchResults = emptyList()
+                isSearching = false
+                record(error)
+            }
+        }
+    }
+
+    /**
+     * Creates from a search hit or the featured catalog (`musicToken`
+     * covers artist/song/genre; a `GenreStation`'s own token is passed
+     * as the music token — xivpiano: "making one uses its token as the
+     * music token"). Appends locally like pithos — no refetch round
+     * trip; deduped by id. Bumps `stationCreatedTick` so the sheet
+     * dismisses on success.
+     */
+    private suspend fun createStation(musicToken: String) {
+        if (isMutatingStations) return
+        lastErrorMessage = null
+        isMutatingStations = true
+        try {
+            val station = session.createStation(musicToken = musicToken)
+            if (stations.none { it.id == station.id }) {
+                stations = stations + station
+            }
+            stationCreatedTick += 1
+        } catch (error: Exception) {
+            record(error)
+        } finally {
+            isMutatingStations = false
+        }
+    }
+
+    /**
+     * Fetches Pandora's featured stations once per session
+     * (`station.getGenreStations`, no parameters). The browse sheet
+     * opens instantly on repeat visits; a relaunch refetches.
+     */
+    private suspend fun loadGenreStations() {
+        if (genreCategories != null || isLoadingGenres) return
+        isLoadingGenres = true
+        try {
+            val categories = session.getGenreStations()
+            genreCategories = categories
+            AppLog.info("genre stations: ${categories.size} categories")
+        } catch (error: Exception) {
+            AppLog.error("genre stations failed: $error")
+            record(error)
+        } finally {
+            isLoadingGenres = false
+        }
     }
 
     // MARK: Error copy (port of `AppStore.userMessage(for:)` / `record`)

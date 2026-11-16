@@ -361,6 +361,10 @@ fun Modifier.amphoraCardRow(theme: Theme.Tokens, tinted: Boolean = false): Modif
  * button by 8%, which is right for a 44pt control and wrong for a
  * 380pt-wide row.
  *
+ * `strong = true` selects iOS's `PressableButtonStyle` instead — the
+ * full 8% dip for rows whose iOS port chose it (e.g. the browse
+ * sheet's station rows).
+ *
  * The iOS style animates the plain button's label; here the press
  * interaction drives the same opacity+scale on the row's own layer.
  */
@@ -371,17 +375,22 @@ fun RowPressableButton(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
+    strong: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val isPressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) RowPressable.pressedScale else 1f,
+        targetValue = if (isPressed) {
+            if (strong) Pressable.pressedScale else RowPressable.pressedScale
+        } else 1f,
         animationSpec = spring(dampingRatio = 0.68f, stiffness = Pressable.springStiffness),
         label = "row-press-scale",
     )
     val opacity by animateFloatAsState(
-        targetValue = if (isPressed) RowPressable.pressedOpacity else 1f,
+        targetValue = if (isPressed) {
+            if (strong) Pressable.pressedOpacity else RowPressable.pressedOpacity
+        } else 1f,
         animationSpec = spring(dampingRatio = 0.68f, stiffness = Pressable.springStiffness),
         label = "row-press-opacity",
     )
