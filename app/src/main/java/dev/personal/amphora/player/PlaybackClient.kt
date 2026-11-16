@@ -91,6 +91,22 @@ class PlaybackClient(private val context: Context) {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
 
+    /**
+     * Tracks queued behind the current one, most immediate first — the
+     * "Up Next" list (the port of PlayerService.upcomingTracks).
+     */
+    private val _upcomingTracks = MutableStateFlow<List<Track>>(emptyList())
+    val upcomingTracks: StateFlow<List<Track>> = _upcomingTracks
+
+    /**
+     * The app's playback volume (0...1). `Player.volume` scales what
+     * this app outputs — it does **not** change the phone's system
+     * volume, so the player can offer its own level without fighting
+     * the hardware buttons.
+     */
+    private val _volume = MutableStateFlow(1f)
+    val volume: StateFlow<Float> = _volume
+
     val isPlaying: Boolean
         get() = _state.value == PlaybackState.playing || _state.value == PlaybackState.buffering
 
@@ -310,7 +326,9 @@ class PlaybackClient(private val context: Context) {
 
     /** Sets the app's playback volume, clamped to 0...1. */
     fun setVolume(value: Float) = withController { controller ->
-        controller.volume = value.coerceIn(0f, 1f)
+        val clamped = value.coerceIn(0f, 1f)
+        controller.volume = clamped
+        _volume.value = clamped
     }
 
     /** Jumps forward in the current track (remote command). */
@@ -407,6 +425,23 @@ class PlaybackClient(private val context: Context) {
         }
     }
 
+    /** Republishes the Up Next list from the queue behind the current
+     *  item (the port of slots.dropFirst().map(\.track)). */
+    private fun publishUpcoming() {
+        val controller = connected
+        val tracks = if (controller == null) {
+            emptyList()
+        } else {
+            val current = controller.currentMediaItemIndex
+            ((current + 1) until controller.mediaItemCount).mapNotNull { index ->
+                tracksByToken[controller.getMediaItemAt(index).mediaId]
+            }
+        }
+        if (_upcomingTracks.value != tracks) {
+            _upcomingTracks.value = tracks
+        }
+    }
+
     /** Adopts a new current track (or none): resets position and length,
      *  notifies the onTrackChanged observers, republishes the state. */
     private fun adoptCurrent(track: Track?) {
@@ -489,6 +524,7 @@ class PlaybackClient(private val context: Context) {
                 }
             }
             adoptCurrent(newTrack)
+            publishUpcoming()
             requestMoreTracksIfNeeded()
         }
 
@@ -496,6 +532,7 @@ class PlaybackClient(private val context: Context) {
             // Enqueues, clears and removals land here; the transition
             // handler covers current-track changes. This is where the
             // need-more contract stays current after an append.
+            publishUpcoming()
             requestMoreTracksIfNeeded()
         }
 
@@ -517,6 +554,7 @@ class PlaybackClient(private val context: Context) {
                 // the current track must not stay stale.
                 finishOutgoingTrack()
                 adoptCurrent(null)
+                publishUpcoming()
             }
             publishState()
         }

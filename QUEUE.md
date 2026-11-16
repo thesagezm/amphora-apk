@@ -15,23 +15,15 @@ before porting any view).
 ## Current Milestone
 
 **A4** — playback (the "it works" milestone). User said keep moving
-2026-11-16 while they test A3 on their phone in parallel. **A4.1 +
-A4.2 + A4.3 landed**; A4.4 next (the player UI: slot + MiniPlayer +
-NowPlayingView land together so no card tap is dead).
+2026-11-16 while they test A3 on their phone in parallel. **A4.1–A4.4
+landed**; A4.5 (robustness pass) is the last A4 unit.
 
 ## Queue (pending, in order)
 
-- **A4.4 — player UI**: MainTabView mini-player slot + the
-  NowPlayingView sheet host (one `ModalBottomSheet` for the whole
-  shell, iOS owns the sheet in MainTabView too); `ui/MiniPlayer.kt`
-  port (progress hairline, toggle/skip, caption; AirPlay route
-  picker → out of scope per AGENTS.md deprioritization) +
-  `ui/NowPlayingView.kt` + `ui/PlayerScrubber.kt` ports, view-for-view
-  from the SwiftUI files, minus FeedbackBar (thumbs are A5); shows
-  the skip-limit message + "Tuned to …" confirmation toast surfaces
-  (both landed in the store).
-- **A4.5 — robustness pass**: error states, session-expiry during
-  playlist fetch, notification polish, QUEUE deltas.
+- **A4.5 — robustness pass**: error states review, session-expiry
+  during playlist fetch, notification polish (notification channel
+  name, POST_NOTIFICATIONS grant flow on Android 13+), QUEUE deltas;
+  possibly the `SleepTimerSheet`-shape groundwork if small.
 - **BLOCKED on user action — Waydroid smoke test**: the container
   service needs root (`sudo systemctl start waydroid-container`, or
   however they normally start Waydroid); agent-side `sudo` requires a
@@ -85,6 +77,34 @@ NowPlayingView land together so no card tap is dead).
 
 ## Log
 
+- 2026-11-16 — **A4.4 landed — the player UI** (MiniPlayer +
+  NowPlayingView + PlayerScrubber + the ambient theme, ported
+  view-for-view): `ui/MiniPlayer.kt` (card with the top-edge progress
+  hairline — isolated flow reads so the per-tick elapsed redraws only
+  the 2.5 dp strip; artwork, title/artist, 34dp accent play/pause
+  circle, skip; onOpen reports to MainTabView) + `ui/MainTabView.kt`
+  slot (between content and tab bar = real layout space — the *better*
+  behavior iOS chased in 2026-11-11: lists never scroll under the
+  card; one ModalBottomSheet owns NowPlayingView for the whole shell)
+  + `ui/NowPlayingView.kt` (ambient playerBackground from the artwork
+  palette + AmbientGlow ellipse, artwork with the double shadow,
+  left-aligned title/artist/album/station header + quality chip,
+  scrubber + time labels, ad badge, SKIP LIMIT badge + message,
+  transport (back15 / 72dp accent circle / next) with the press-dip,
+  volume slider (live drag, disk write on release — the port of the
+  draftVolume pattern), pithos-style Up Next disclosure, "Tuned to …"
+  confirmation capsule, error text, Nothing Playing state; Tune
+  Station… menu item → TuneStationSheet(station = nil) works today;
+  FeedbackBar/lyrics/radio surfaces documented as A5/A6/A7)
+  + `ui/PlayerScrubber.kt` (Canvas capsule + drag knob, snap-while-
+  dragging / 200ms glide otherwise, TalkBack ±10s custom actions)
+  + `player/PlaybackClient.kt` grows `upcomingTracks` + `volume`
+  StateFlows (the Up Next list + the volume slider's source)
+  + `player/ArtworkPaletteService.kt` + `store/ArtworkThemeController.kt`
+  (the 32×32 RGBA8 sample → `ArtworkColors.extract` port; Coil shared
+  loader cache; palette memo cache 24 cap + request counter;
+  attached in RootView like iOS) + `support/TimeFormat.kt`.
+  Local gate green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-16 — **A4.3 landed — the play surface lights up**:
   StationsView rows send `.playStation` (iOS Button+contextMenu →
   `RowPressableButton` with onClick play + onLongClick menu — which

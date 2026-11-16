@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.personal.amphora.store.AmphoraStore
+import dev.personal.amphora.store.ArtworkThemeController
 import dev.personal.amphora.store.AuthPhase
 
 @Composable
@@ -36,6 +37,9 @@ fun RootView(store: AmphoraStore) {
     val theme = Theme.tokens()
 
     LaunchedEffect(Unit) {
+        // The ambient artwork theme attaches to the player once (the
+        // port of RootView's ArtworkThemeController attach).
+        ArtworkThemeController.attach(store.player)
         // Warm-launch restore — idempotent, so re-entering after a
         // background relaunch is a no-op.
         store.send(AmphoraStore.Intent.RestoreSession)
