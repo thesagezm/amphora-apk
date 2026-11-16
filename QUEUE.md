@@ -19,8 +19,17 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3 verification owed**: Waydroid smoke test (see below) once the
-  A3.5 CI run is green. Then the user phone test of A3.
+- **BLOCKED on user action — Waydroid smoke test**: the container
+  service needs root (`sudo systemctl start waydroid-container`, or
+  however they normally start Waydroid); agent-side `sudo` requires a
+  password. Once the container runs, resume: `waydroid session start`
+  → `adb connect` (or `waydroid app install Amphora-debug.apk`) →
+  launch → login screen → wrong-password error copy → real login →
+  signed-in → station list renders. Per user directive (2026-11-16):
+  Waydroid ONLY, never an emulator.
+- **A3 verification**: after the smoke test, the user tests on their
+  phone via the CI APK artifact. A4 begins on their confirmation (or
+  an explicit "keep moving").
 - **A4 (next milestone)**: playback — `Media3 ExoPlayer` +
   `MediaSessionService`, playlist fetch wired to `.playStation`
   (row taps + hero play button light up then), media notification,
@@ -73,6 +82,11 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **Waydroid smoke test attempted, blocked on root**:
+  Waydroid installed (`/usr/bin/waydroid`, MAINLINE vendor) but
+  Session STOPPED; `waydroid session start` cannot run without the
+  container service, which needs sudo (password is the user's). Filed
+  the blocker; session state recorded here so any session can resume.
 - 2026-11-16 — **A3.5 landed — A3 units complete**: store gains the
   tuning surface (`stationModes`/`isLoadingModes`/`isChangingMode`/
   `stationModeChangedTick` + private `modesStationId`, intents
