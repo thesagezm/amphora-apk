@@ -21,11 +21,6 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Queue (pending, in order)
 
-- **A5.2** — sleep timer: store countdown (duration + end-of-track
-  modes, restore from preferences, fire-on-expiry pause, end-of-track
-  fire in the onTrackChanged observer) + `SleepTimerSheet` (5 duration
-  rows + End of current track + Cancel timer) + the player-menu
-  "Sleep Timer…"/"Sleep Timer (label)…" item.
 - **A5.3** — bookmarks + sleep-song: store surface
   (refresh/add/delete + "Song bookmarked" confirmations) + the player
   menu items Bookmark Song / Bookmark Artist / Hide This Song.
@@ -113,6 +108,23 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Log
 
+- 2026-11-17 — **A5.2 landed — sleep timer**: `AmphoraStore` grows
+  `sleepTimer`/`sleepTimerLabel` (live label refreshed only when the
+  visible minute changes — the loop wakes every ≤30 s, not every
+  second) + intents SetSleepTimer/CancelSleepTimer (iOS dispatches
+  synchronously; port delta: the function is `applySleepTimer` —
+  Kotlin generates a `setSleepTimer` setter for the property, JVM
+  clash). Duration mode counts down and pauses on expiry;
+  end-of-track mode fires in the onTrackChanged observer at the next
+  track start (iOS's exact spot); restore-from-preferences in init
+  resumes an unexpired duration timer or carries an end-of-track one.
+  + `ui/SleepTimerSheet.kt` (5 duration rows + End of current track +
+  destructive Cancel timer when set, card-row language, Bedtime /
+  SkipNext icon ports of moon.zzz / forward.end) hosted as a sheet
+  from the player menu + the "Sleep Timer…"/"Sleep Timer (label)…"
+  menu item (Bedtime icon) — the app's only sleep-timer entry, one
+  moon, no duplicate. Local gate green: `:core:test` +
+  `:app:assembleDebug`.
 - 2026-11-17 — **A5.1 landed — feedback: store surface + FeedbackBar**
   (user said keep moving into A5 in the same message that pointed at
   the handover): `AmphoraStore` grows `currentRating` +

@@ -34,6 +34,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import pandoracore.FeedbackRating
 import pandoracore.LastFmClient
@@ -45,6 +46,7 @@ import pandoracore.PlaylistError
 import pandoracore.RadioBrowserClient
 import pandoracore.SessionManager
 import pandoracore.SessionManagerError
+import pandoracore.SleepTimer
 import pandoracore.StationModesError
 
 /**
@@ -223,6 +225,22 @@ class AmphoraStore {
      */
     private var currentFeedbackId: String? = null
 
+    // MARK: Observable state (sleep timer)
+
+    /** The sleep timer (off by default). */
+    var sleepTimer: SleepTimer by mutableStateOf(SleepTimer.off)
+        private set
+
+    /** Live status text ("12 min left", "End of track", "Off").
+     *  Refreshed when the remaining minutes change, so the UI
+     *  re-renders about once a minute instead of every second. */
+    var sleepTimerLabel: String by mutableStateOf(SleepTimer.off.label())
+        private set
+
+    /** The countdown coroutine for a duration timer. Cancelled and
+     *  replaced whenever the timer changes. */
+    private var sleepTimerJob: Job? = null
+
     // MARK: Intents
 
     /**
@@ -263,6 +281,8 @@ class AmphoraStore {
             is Intent.RateCurrentTrack ->
                 launchIntent { rateCurrentTrack(intent.rating) }
             is Intent.RemoveCurrentRating -> launchIntent { removeCurrentRating() }
+            is Intent.SetSleepTimer -> applySleepTimer(intent.timer)
+            is Intent.CancelSleepTimer -> applySleepTimer(SleepTimer.off)
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -289,6 +309,8 @@ class AmphoraStore {
         data class SetPlaybackVolume(val volume: Float) : Intent()
         data class RateCurrentTrack(val rating: FeedbackRating) : Intent()
         data object RemoveCurrentRating : Intent()
+        data class SetSleepTimer(val timer: SleepTimer) : Intent()
+        data object CancelSleepTimer : Intent()
         data object DismissError : Intent()
     }
 
@@ -308,6 +330,17 @@ class AmphoraStore {
         // The playback volume survives a relaunch. `null` (a file written
         // before the key existed) means full volume.
         player.setVolume(preferences.playbackVolume ?: 1f)
+        // A sleep timer survives a relaunch: restore it and resume the
+        // countdown if its deadline is still ahead.
+        val storedTimer = preferences.sleepTimer
+        if (storedTimer.mode == SleepTimer.Mode.duration && !storedTimer.hasExpired()) {
+            sleepTimer = storedTimer
+            sleepTimerLabel = storedTimer.label()
+            startSleepTimerCountdown()
+        } else if (storedTimer.mode == SleepTimer.Mode.endOfTrack) {
+            sleepTimer = storedTimer
+            sleepTimerLabel = storedTimer.label()
+        }
         // The player asks for more tracks when its queue runs low — pithos
         // preloads the next playlist when one song remains.
         player.onNeedMoreTracks = { fetchMoreTracks() }
@@ -330,6 +363,12 @@ class AmphoraStore {
             currentFeedbackId = null
             currentRating = feedbackRatingFor(track?.rating)
             prepareAdIfNeeded(track)
+            // An "end of track" sleep timer stops playback here — the
+            // moment the next track starts (iOS fires it in the same
+            // spot of its onTrackChanged observer).
+            if (sleepTimer.mode == SleepTimer.Mode.endOfTrack && track != null) {
+                fireSleepTimer()
+            }
         }
         // "Currently playing" for the Home rows and the hero: the iOS
         // views compute `isCurrent && store.player.isPlaying`; this
@@ -926,6 +965,73 @@ class AmphoraStore {
         } catch (error: Exception) {
             record(error)
         }
+    }
+
+    // MARK: Sleep timer (the port of AppStore's sleep-timer section)
+
+    /**
+     * Sets (or clears) the sleep timer. A duration timer that has
+     * expired stops playback; an end-of-track timer fires when the
+     * current track finishes. Not an async intent — iOS dispatches it
+     * synchronously (the sheet dismisses itself right after sending).
+     *
+     * Port delta: iOS names this `setSleepTimer(_:)`; Kotlin generates
+     * a `setSleepTimer` setter for the `sleepTimer` property, so the
+     * function takes iOS's own wording for the *apply* step instead.
+     */
+    private fun applySleepTimer(timer: SleepTimer) {
+        sleepTimer = timer
+        sleepTimerLabel = timer.label()
+        updatePreferences { it.copy(sleepTimer = timer) }
+        // A new timer replaces the old countdown.
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        if (timer.hasExpired()) {
+            player.pause()
+            sleepTimer = SleepTimer.off
+            sleepTimerLabel = SleepTimer.off.label()
+            updatePreferences { it.copy(sleepTimer = SleepTimer.off) }
+            return
+        }
+        if (timer.mode != SleepTimer.Mode.duration) return
+        startSleepTimerCountdown()
+    }
+
+    /**
+     * Counts a duration timer down and stops playback when it expires.
+     * The label is refreshed only when the visible minute count
+     * changes, so the UI re-renders about once a minute — not every
+     * second.
+     */
+    private fun startSleepTimerCountdown() {
+        if (sleepTimer.mode != SleepTimer.Mode.duration) return
+        sleepTimerJob = intentScope.launch {
+            while (isActive) {
+                val remaining = sleepTimer.remaining()
+                val label = sleepTimer.label()
+                if (label != sleepTimerLabel) {
+                    sleepTimerLabel = label
+                }
+                if (remaining <= 0.0) {
+                    fireSleepTimer()
+                    return@launch
+                }
+                // Wake up when the next label changes (or when the
+                // timer ends) instead of polling every second.
+                delay((minOf(remaining, 30.0) * 1000).toLong())
+            }
+        }
+    }
+
+    /** The timer expired (or the track it was waiting for ended): pause
+     *  playback and clear the timer. */
+    private fun fireSleepTimer() {
+        player.pause()
+        sleepTimer = SleepTimer.off
+        sleepTimerLabel = SleepTimer.off.label()
+        updatePreferences { it.copy(sleepTimer = SleepTimer.off) }
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
     }
 
     // MARK: Skip limit

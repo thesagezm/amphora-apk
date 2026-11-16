@@ -13,9 +13,8 @@
 //  Arriving with their own units (kept out so nothing ships inert):
 //  - Lyrics toolbar button + panel: A6.
 //  - Radio surfaces (LIVE badge, identify status, stop): A7.
-//  - Sleep Timer… / Bookmark Song / Bookmark Artist / Hide This Song
-//    menu items: A5 (the Tune Station… item works today — its sheet
-//    landed in A3.5).
+//  - Bookmark Song / Bookmark Artist / Hide This Song menu items: A5.3
+//    (Sleep Timer… landed with A5.2; Tune Station… landed in A3.5).
 //  - The AirPlay route picker + route indicator: out of scope
 //    (AGENTS.md deprioritizes the output picker).
 //
@@ -61,6 +60,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Tune
@@ -108,6 +108,7 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
     val errorMessage by store.player.errorMessage.collectAsState()
     var isShowingActions by remember { mutableStateOf(false) }
     var isShowingTuning by remember { mutableStateOf(false) }
+    var isShowingSleepTimer by remember { mutableStateOf(false) }
     var isShowingUpNext by remember { mutableStateOf(false) }
     // The volume while the slider is being dragged. The level is
     // applied live, but it is only written to disk when the drag ends.
@@ -145,6 +146,35 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                         onDismissRequest = { isShowingActions = false },
                         containerColor = theme.surface,
                     ) {
+                        // Every secondary action in one place (iOS's
+                        // actionsMenu). This is the app's only
+                        // sleep-timer surface entry — one sleep control,
+                        // no duplicate moons. The radio-specific items
+                        // (Identify Song) arrive with A7; the song-level
+                        // bookmark/hide items land with A5.3.
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (store.sleepTimer.isOff) {
+                                        "Sleep Timer…"
+                                    } else {
+                                        "Sleep Timer (${store.sleepTimerLabel})…"
+                                    },
+                                    color = labelColor(theme),
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Rounded.Bedtime,
+                                    contentDescription = null,
+                                    tint = labelColor(theme),
+                                )
+                            },
+                            onClick = {
+                                isShowingActions = false
+                                isShowingSleepTimer = true
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("Tune Station…", color = labelColor(theme)) },
                             leadingIcon = {
@@ -233,6 +263,18 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
             containerColor = theme.background,
         ) {
             TuneStationSheet(store = store, station = null, onDismiss = { isShowingTuning = false })
+        }
+    }
+    if (isShowingSleepTimer) {
+        val theme = Theme.tokens()
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { isShowingSleepTimer = false },
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+            ),
+            containerColor = theme.background,
+        ) {
+            SleepTimerSheet(store = store, onDismiss = { isShowingSleepTimer = false })
         }
     }
 }
