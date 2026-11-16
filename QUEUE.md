@@ -19,20 +19,27 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3.2 (next)**: `MainTabView` shell (Home/Radio/Settings tabs,
-  mini-player slot seam) + `StationsView` port — loading/empty/error
-  states, station rows with badges, toolbar (recents/add/reorder) —
-  replaces `RootView`'s `PlaceholderHome`. Read
-  `Amphora/UI/MainTabView.swift` + `StationsView.swift` first.
-- **A3.3**: hero + browse row + pull-to-refresh + reorder UI
-  (`moveStation` store intent already landed in A3.1).
+- **A3.3 (next)**: StationsView hero (last-played station card — needs
+  `TransportGlyph` Canvas port) + edit-mode reorder (drag; store
+  `MoveStation` intent already landed in A3.1) + toolbar reorder
+  button.
 - **A3.4**: `AddStationView` + `BrowseStationsSheet` + genre stations
+  + toolbar add button + browse row + empty-state Add button
   (store: create/createGenre/loadGenres intents).
-- **A3.5**: rename/delete alerts + `TuneStationSheet` + station search
-  (store intents for search landed with A3.4's MusicSearch plumbing —
-  check `SessionManager.search`).
-- **A3 note**: `.playStation` intent is A4 wiring — station taps stay
-  inert in A3 (playback milestone); documented, not a hidden stub.
+- **A3.5**: `TuneStationSheet` + the Tune context item + station
+  search (store: search intent; `SessionManager.search` exists).
+- **A3 shipped-deltas** (each documented in its file header):
+  row taps start playback — A4 wiring (rows are long-press-only until
+  then, so no dead tap); recents toolbar button — A5 (with
+  `RecentsView`); Radio/Settings tabs show quiet named shells until
+  A7/A8; mini-player slot — A4.
+- **Porting notes learned in A3.2** (m3 1.3.2 + coil 3.1.0):
+  `NavigationBarItem` is a `RowScope` extension (call inside
+  `NavigationBar { }`); `PullToRefreshBox` lives in
+  `androidx.compose.material3.pulltorefresh`; coil's
+  `SubcomposeAsyncImage` wants the `loading`/`error`/`success` slot
+  overload (matching `painter.state` inside the scope confuses K2's
+  typing); `SleepTimer()` is private — use `SleepTimer.off`.
 - **A2 verification owed before A4** (user-perceived): Waydroid smoke
   test — launch → login screen → wrong password shows the typed error
   copy → real login lands signed-in. Then user phone install via the
@@ -71,6 +78,20 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **A3.2 landed**: `ui/MainTabView.kt` (Home/Radio/
+  Settings shell, `RowScope.TabItem` with accent tinting; Radio/
+  Settings quiet named shells until A7/A8) + `ui/StationsView.kt`
+  (large title, loading/empty/error states with Retry, pull-to-refresh
+  via `PullToRefreshBox`, explicit-content notice row, station rows
+  with artwork/badges/quickmix glyph/shared icon, long-press context
+  menu with working Rename + Delete dialogs incl. the quickmix +
+  thumbprint guards, non-blocking bottom error banner with dismiss) +
+  `ui/CachedArtwork.kt` (Coil 3 port: recessed tile → spinner →
+  fallback glyph states) + `support/Haptics.kt` (light/medium port) +
+  `Theme.kt` grows `amphoraCardRow` + `RowPressableButton` (the
+  Theme.swift list-language ports). `RootView`'s `PlaceholderHome`
+  deleted — signed-in now shows the real shell. Local gate green:
+  372/372 + APK.
 - 2026-11-16 — **user directive recorded**: device testing via Waydroid
   ONLY (no emulator), no subagents (standing).
 - 2026-11-16 — **A3.1 landed**: `persistence/PreferencesStore.kt`

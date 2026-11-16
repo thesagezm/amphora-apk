@@ -18,16 +18,28 @@
 
 package dev.personal.amphora.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import pandoracore.ArtworkColors
 import pandoracore.PaletteColor
@@ -321,4 +333,73 @@ object Pressable {
 object RowPressable {
     val pressedOpacity = 0.72f
     val pressedScale = 0.99f
+}
+
+/**
+ * Draws one list row as a soft rounded surface card — Amphora's list
+ * language everywhere (stations, history, bookmarks, search results).
+ * Fill only, no stroke: structure comes from the surface tone against
+ * the floor, never from a hard border. `tinted` marks an active row
+ * (e.g. the playing station) with a matte accent wash.
+ *
+ * iOS applies this through `listRowBackground` + `listRowInsets`
+ * (content inset 16/10, a 5pt gap between cards); the Compose modifier
+ * draws the card and insets its content directly.
+ */
+fun Modifier.amphoraCardRow(theme: Theme.Tokens, tinted: Boolean = false): Modifier =
+    padding(horizontal = 16.dp, vertical = 5.dp)
+        .background(
+            color = if (tinted) theme.accent.copy(alpha = 0.14f) else theme.surface,
+            shape = RoundedCornerShape(Theme.radiusM),
+        )
+        .padding(horizontal = 16.dp, vertical = 10.dp)
+
+/**
+ * Port of `RowPressableButtonStyle` (Theme.swift): press feedback for
+ * a full-width list row — the card dims and settles with a spring.
+ * Much softer than `Pressable` on purpose: that one shrinks a glyph
+ * button by 8%, which is right for a 44pt control and wrong for a
+ * 380pt-wide row.
+ *
+ * The iOS style animates the plain button's label; here the press
+ * interaction drives the same opacity+scale on the row's own layer.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun RowPressableButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val isPressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) RowPressable.pressedScale else 1f,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = Pressable.springStiffness),
+        label = "row-press-scale",
+    )
+    val opacity by animateFloatAsState(
+        targetValue = if (isPressed) RowPressable.pressedOpacity else 1f,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = Pressable.springStiffness),
+        label = "row-press-opacity",
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = opacity
+            }
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+    ) {
+        content()
+    }
 }

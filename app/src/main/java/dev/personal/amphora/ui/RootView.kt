@@ -62,37 +62,7 @@ fun RootView(store: AmphoraStore) {
                 }
             }
             AuthPhase.signedOut, AuthPhase.signingIn -> LoginView(store)
-            AuthPhase.signedIn -> PlaceholderHome(store)
+            AuthPhase.signedIn -> MainTabView(store)
         }
     }
 }
-
-/** A2 placeholder — the iOS-faithful `MainTabView` + `StationsView`
- *  port replaces this in A3. */
-@Composable
-private fun PlaceholderHome(store: AmphoraStore) {
-    val theme = Theme.tokens()
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(theme.backgroundGradient)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(modifier = Modifier.height(64.dp))
-        Text(
-            text = "Amphora",
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Black,
-            color = if (theme.isLight) Color(0xFF151021) else Color(0xFFF2EFFB),
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = if (store.isSubscriber) "Signed in · subscriber" else "Signed in",
-            fontSize = 15.sp,
-            color = if (theme.isLight) Color(0xFF5B5570) else Color(0xFF9B94B4),
-        )
-    }
-}
-
-private typealias FontWeight = androidx.compose.ui.text.font.FontWeight

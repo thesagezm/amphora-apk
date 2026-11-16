@@ -117,6 +117,11 @@ class AmphoraStore {
      *  the Home rows render it). */
     var skipLimitStationId: String? by mutableStateOf(null)
         private set
+    /** Whether the current Pandora station is actively playing. A4
+     *  wires this to the player; until then nothing plays, so it stays
+     *  false (the Home rows render their "playing" glyph off it). */
+    var isPlayingCurrentStation: Boolean by mutableStateOf(false)
+        private set
     /** Whether Pandora hides explicit tracks for this account
      *  (`user.getSettings`). Pandora's explicit filter is an **account**
      *  switch, not a per-track flag, so Home shows one account-level
