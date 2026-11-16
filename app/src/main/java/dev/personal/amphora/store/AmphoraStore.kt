@@ -39,8 +39,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import pandoracore.Bookmark
 import pandoracore.FeedbackRating
+import pandoracore.GoogleTranslateClient
 import pandoracore.LastFmClient
 import pandoracore.LegacyPandoraClient
+import pandoracore.Lyrics
+import pandoracore.LyricsError
+import pandoracore.LyricsProviderChain
+import pandoracore.LyricsTranslation
 import pandoracore.PandoraAPIError
 import pandoracore.PandoraMalformedResponseError
 import pandoracore.PandoraTransportError
@@ -51,6 +56,7 @@ import pandoracore.SessionManager
 import pandoracore.SessionManagerError
 import pandoracore.SleepTimer
 import pandoracore.StationModesError
+import pandoracore.Track
 
 /**
  * Where the app is in the auth lifecycle. Drives `RootView`'s switch.
@@ -61,6 +67,31 @@ enum class AuthPhase {
     signedOut,
     signingIn,
     signedIn,
+}
+
+/**
+ * The state of the English translation for the current lyrics. The
+ * lyrics panel turns this into the **Translate** button, the
+ * "Translating…" state and the result (the port of AppStore's nested
+ * `LyricsTranslationState` enum — the failed message needs its
+ * associated value, so a sealed class).
+ */
+sealed class LyricsTranslationState {
+    /** Nothing has been asked for yet. */
+    data object None : LyricsTranslationState()
+
+    /** A request is in flight. */
+    data object Translating : LyricsTranslationState()
+
+    /** The English translation is on the lyrics. */
+    data object Translated : LyricsTranslationState()
+
+    /** The lyrics are already in English — there is nothing to
+     *  translate. */
+    data object AlreadyEnglish : LyricsTranslationState()
+
+    /** The request failed. The user can try again. */
+    data class Failed(val message: String) : LyricsTranslationState()
 }
 
 class AmphoraStore {
@@ -269,6 +300,39 @@ class AmphoraStore {
     /** Disk persistence for the history (JSON file in filesDir). */
     private val historyStore = HistoryStore()
 
+    // MARK: Observable state (lyrics)
+
+    /** The lyrics of the current track (the core provider chain's
+     *  answer: synced lines, plain text, instrumental — or nothing). */
+    var lyrics: Lyrics? by mutableStateOf(null)
+        private set
+    var isLoadingLyrics: Boolean by mutableStateOf(false)
+        private set
+
+    /** The translation surface of the current lyrics: the **Translate**
+     *  button, the "Translating…" state and the result (translated /
+     *  already English / failed with a retry). */
+    var lyricsTranslationState: LyricsTranslationState by
+        mutableStateOf(LyricsTranslationState.None)
+        private set
+
+    /** Per-`trackToken` lyrics cache — "not found" is cached too, so
+     *  repeat listens never re-hit the service. Main-dispatcher only. */
+    private val lyricsCache = mutableMapOf<String, Lyrics>()
+    private var lyricsJob: Job? = null
+    private var translationJob: Job? = null
+    private var romanizationJob: Job? = null
+
+    /** The lyrics clients (the core chain: exact match → fuzzy search →
+     *  a second database) and the Google endpoint that both translates
+     *  and romanizes. One client instance serves both roles (iOS
+     *  injects two — both are stateless; the seams are kept). */
+    private val lyricsProvider = LyricsProviderChain.defaultChain(
+        transport = OkHttpGetTransport(),
+    )
+    private val lyricsTranslator = GoogleTranslateClient(transport = OkHttpGetTransport())
+    private val lyricsRomanizer = lyricsTranslator
+
     // MARK: Intents
 
     /**
@@ -324,6 +388,10 @@ class AmphoraStore {
                 launchIntent {
                     rateHistoryTrack(FeedbackRating.none, intent.entry, intent.station)
                 }
+            is Intent.RefreshLyrics ->
+                loadLyrics(player.currentTrack.value, force = true)
+            is Intent.TranslateLyrics ->
+                requestTranslation(player.currentTrack.value, manual = true)
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -366,6 +434,8 @@ class AmphoraStore {
             val entry: PlayHistory.Entry,
             val station: pandoracore.Station,
         ) : Intent()
+        data object RefreshLyrics : Intent()
+        data object TranslateLyrics : Intent()
         data object DismissError : Intent()
     }
 
@@ -438,6 +508,10 @@ class AmphoraStore {
             if (sleepTimer.mode == SleepTimer.Mode.endOfTrack && track != null) {
                 fireSleepTimer()
             }
+            // Lyrics follow the current track (never for ads — the radio
+            // guard arrives with A7); the per-track cache makes repeat
+            // listens free.
+            loadLyrics(track)
         }
         // "Currently playing" for the Home rows and the hero: the iOS
         // views compute `isCurrent && store.player.isPlaying`; this
@@ -984,6 +1058,258 @@ class AmphoraStore {
         confirmationJob = intentScope.launch {
             delay(3_000)
             confirmationMessage = null
+        }
+    }
+
+    // MARK: Lyrics (the port of AppStore's Lyrics section; the radio
+    // branch — an identified radio song owning the panel — arrives
+    // with A7)
+
+    /**
+     * Loads lyrics for the current track (lrclib.net first, via the
+     * core's provider chain). Results — including "not found" — are
+     * cached per `trackToken`, so repeat listens never re-hit the
+     * service. A track change cancels the in-flight fetch; a
+     * superseded fetch never touches state.
+     */
+    private fun loadLyrics(track: Track?, force: Boolean = false) {
+        lyricsJob?.cancel()
+        lyricsJob = null
+        translationJob?.cancel()
+        translationJob = null
+        romanizationJob?.cancel()
+        romanizationJob = null
+        if (track == null || track.isAdvertisement) {
+            // (iOS also guards `!track.isRadio` here — A7.)
+            lyrics = null
+            isLoadingLyrics = false
+            lyricsTranslationState = LyricsTranslationState.None
+            return
+        }
+        if (!force) {
+            val cached = lyricsCache[track.trackToken]
+            if (cached != null) {
+                lyrics = cached
+                isLoadingLyrics = false
+                lyricsTranslationState = if (cached.hasTranslation) {
+                    LyricsTranslationState.Translated
+                } else {
+                    LyricsTranslationState.None
+                }
+                return
+            }
+        }
+        lyrics = null
+        isLoadingLyrics = true
+        lyricsTranslationState = LyricsTranslationState.None
+        val provider = lyricsProvider
+        AppLog.info(
+            "lyrics: lookup for \"${track.title}\" — \"${track.artist}\"",
+            AppLog.Category.lyrics,
+        )
+        lyricsJob = intentScope.launch {
+            try {
+                val fetched = provider.lyrics(track)
+                // A cancelled job dies at the await above; the state
+                // below only runs for live fetches.
+                lyricsCache[track.trackToken] = fetched
+                lyrics = fetched
+                isLoadingLyrics = false
+                AppLog.info(
+                    "lyrics: ${describe(fetched)} for \"${track.title}\"",
+                    AppLog.Category.lyrics,
+                )
+                requestTranslation(track, manual = false)
+                requestRomanization(track)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                // Superseded by a newer track — that one owns the state.
+                throw error
+            } catch (error: Exception) {
+                isLoadingLyrics = false
+                if (error is LyricsError.NotFound) {
+                    // "Not found" is cached — the panel offers a retry,
+                    // but a repeat visit costs no network.
+                    lyricsCache[track.trackToken] = Lyrics.empty
+                }
+                lyrics = null
+                AppLog.info(
+                    "lyrics: unavailable for \"${track.title}\" ($error)",
+                    AppLog.Category.lyrics,
+                )
+            }
+        }
+    }
+
+    /** Short, loggable description of what a lyrics lookup returned. */
+    private fun describe(fetched: Lyrics): String = when {
+        fetched.instrumental -> "instrumental"
+        fetched.isSynced -> "synced, ${fetched.lines.size} lines"
+        fetched.plainText != null -> "plain text"
+        else -> "empty"
+    }
+
+    /** `true` when `token` is the track whose lyrics are on screen. */
+    private fun isCurrentLyricsToken(token: String): Boolean =
+        player.currentTrack.value?.trackToken == token
+
+    /**
+     * Translates the current lyrics into English.
+     *
+     * The automatic pass (`manual = false`) runs when the lyrics
+     * arrive; the manual pass is the lyrics panel's **Translate**
+     * button — the answer to "there is no way to translate this song"
+     * (the early automatic pass ran only on synced lyrics and gave up
+     * silently; plain-text lyrics had nothing to press).
+     *
+     * The three answers stay apart: a translation to show, lyrics that
+     * are already in English (nothing to do) and a failed request
+     * (worth a retry).
+     */
+    private fun requestTranslation(track: Track?, manual: Boolean) {
+        val current = lyrics ?: return
+        if (current.isEmpty) return
+        // Already translated — nothing to ask for. (The manual pass
+        // lands here too: the button disappears once it worked.)
+        if (current.hasTranslation) {
+            lyricsTranslationState = LyricsTranslationState.Translated
+            return
+        }
+        // The lines to translate: the synchronised lines, or the plain
+        // text split into lines. The service keeps the line breaks, so
+        // the answer lines up with the input one-to-one.
+        val texts: List<String> = if (current.isSynced) {
+            current.lines.map { it.text }
+        } else {
+            val plain = current.plainText ?: return
+            plain.split("\n")
+        }
+        if (texts.isEmpty()) return
+
+        translationJob?.cancel()
+        lyricsTranslationState = LyricsTranslationState.Translating
+        val translator = lyricsTranslator
+        AppLog.info(
+            "lyrics: translating ${texts.size} lines" +
+                (if (manual) " (manual)" else "") +
+                " for \"${track?.title}\"",
+            AppLog.Category.lyrics,
+        )
+        val token = track?.trackToken
+        translationJob = intentScope.launch {
+            val outcome = translator.englishTranslation(texts)
+            // A superseded fetch (a new track, a newer request) never
+            // touches state — the token must still be the live one.
+            if (!isActive) return@launch
+            if (token == null || !isCurrentLyricsToken(token)) return@launch
+            when (outcome) {
+                is LyricsTranslation.Translated -> {
+                    if (applyTranslation(outcome.lines, token)) {
+                        lyricsTranslationState = LyricsTranslationState.Translated
+                        AppLog.info(
+                            "lyrics: translation applied for \"${track?.title}\"",
+                            AppLog.Category.lyrics,
+                        )
+                    } else {
+                        // The answer did not line up with the lines — it
+                        // is refused rather than shown against the wrong
+                        // words.
+                        lyricsTranslationState = LyricsTranslationState.Failed(
+                            "The translation didn't line up. Try again.",
+                        )
+                        AppLog.info(
+                            "lyrics: misaligned translation for \"${track?.title}\" — refused",
+                            AppLog.Category.lyrics,
+                        )
+                    }
+                }
+                LyricsTranslation.AlreadyEnglish -> {
+                    lyricsTranslationState = LyricsTranslationState.AlreadyEnglish
+                    AppLog.info(
+                        "lyrics: already English — \"${track?.title}\"",
+                        AppLog.Category.lyrics,
+                    )
+                }
+                is LyricsTranslation.Failed -> {
+                    lyricsTranslationState = LyricsTranslationState.Failed(
+                        "Couldn't translate the lyrics. Try again.",
+                    )
+                    AppLog.info(
+                        "lyrics: translation failed for \"${track?.title}\" (${outcome.reason})",
+                        AppLog.Category.lyrics,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Kicks off an alphabet romanization for the current lyrics — the
+     * reading line for lyrics written in a non-Latin script ("사랑해" →
+     * "salanghae"). The endpoint skips Latin-script text before any
+     * request, so an English or French song costs nothing here. It is
+     * independent of the translation: neither suppresses the other.
+     */
+    private fun requestRomanization(track: Track) {
+        val current = lyrics ?: return
+        if (!current.isSynced || current.lines.isEmpty()) return
+        val texts = current.lines.map { it.text }
+        val romanizer = lyricsRomanizer
+        val token = track.trackToken
+        romanizationJob = intentScope.launch {
+            val romanized = romanizer.romanization(texts)
+            if (!isActive) return@launch
+            if (romanized != null) {
+                applyRomanization(romanized, token)
+                AppLog.info(
+                    "lyrics: romanization applied for \"${track.title}\"",
+                    AppLog.Category.lyrics,
+                )
+            } else {
+                AppLog.info(
+                    "lyrics: no romanization for \"${track.title}\"",
+                    AppLog.Category.lyrics,
+                )
+            }
+        }
+    }
+
+    /**
+     * Fills the English translation on the cached lyrics for `token`
+     * and, if that track is still current, on the live state.
+     *
+     * The alignment guard lives in the core (`Lyrics.applyingTranslation`):
+     * a misaligned answer is refused rather than shown against the wrong
+     * lines. Returns `false` when the answer could not be applied.
+     */
+    private fun applyTranslation(translated: List<String>, token: String): Boolean {
+        val cached = lyricsCache[token] ?: return false
+        val updated = if (cached.isSynced) {
+            cached.applyingTranslation(translated)
+        } else {
+            cached.applyingPlainTranslation(translated.joinToString("\n"))
+        }
+        if (!updated.hasTranslation) return false
+        lyricsCache[token] = updated
+        if (isCurrentLyricsToken(token)) {
+            lyrics = updated
+        }
+        return true
+    }
+
+    /**
+     * Fills `LyricLine.romanization` on the cached lyrics for `token`
+     * and, if that track is still current, on the live state. Guarded
+     * by line count so a mismatched response can never shift the
+     * alignment. Mirrors `applyTranslation`; each helper rebuilds from
+     * the current cache entry, so whichever lands second keeps the
+     * first one's field.
+     */
+    private fun applyRomanization(romanized: List<String>, token: String) {
+        val cached = lyricsCache[token] ?: return
+        val updated = cached.applyingRomanization(romanized)
+        lyricsCache[token] = updated
+        if (isCurrentLyricsToken(token)) {
+            lyrics = updated
         }
     }
 

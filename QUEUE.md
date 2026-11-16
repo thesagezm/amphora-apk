@@ -23,6 +23,11 @@ until the user confirms A4/A5 on their phone or says keep moving again.
 
 ## Queue (pending, in order)
 
+- **A6.2** — `LyricsPanel` (synced lines scrolling with playback,
+  tap-to-seek, translation bar with Translate/Retry, romanization
+  reading line, plain-text view, instrumental/no-lyrics states) + the
+  NowPlayingView lyrics toolbar toggle (the artwork/header/scrubber
+  region swaps for the panel; transport stays fixed).
 - **A5 verification (user)**: thumbs up/down on the full player (tap
   the active one to undo), the player ⋯ menu (Sleep Timer… incl. the
   live label, Tune Station…, Bookmark Song/Artist → "Song/Artist
@@ -107,6 +112,30 @@ until the user confirms A4/A5 on their phone or says keep moving again.
 
 ## Log
 
+- 2026-11-17 — **A6.1 landed — store lyrics section** (user said
+  keep moving into A6; port of AppStore's Lyrics section, radio
+  branch documented as the A7 seam): `AmphoraStore` grows
+  `lyrics`/`isLoadingLyrics`/`lyricsTranslationState` (the
+  LyricsTranslationState sealed class — None/Translating/Translated/
+  AlreadyEnglish/Failed(message)) + the per-trackToken lyrics cache
+  ("not found" cached as `Lyrics.empty`) + intents RefreshLyrics
+  (force reload of the current track) / TranslateLyrics (manual
+  pass). The onTrackChanged observer loads lyrics after the
+  sleep-timer fire (iOS order); ads excluded, radio guard lands A7.
+  `loadLyrics` cancels the in-flight fetch + translation +
+  romanization on every call; superseded fetches never touch state
+  (CancellationException rethrow + isActive + isCurrentLyricsToken
+  guards — the port of iOS's `!Task.isCancelled` checks).
+  `requestTranslation` (auto on arrival + manual button; synced lines
+  or plain text split on \n) → `applyTranslation` via the core's
+  alignment guard; `requestRomanization` → `applyRomanization`; each
+  rebuilds from the cache entry so the second arrival keeps the
+  first's field. Clients wired: `LyricsProviderChain.defaultChain` +
+  one `GoogleTranslateClient` serving both the translator and
+  romanizer seams (iOS injects two — both stateless; noted). Port
+  delta: iOS AppLog.debug → app AppLog.info (no debug level on the
+  app side; the diagnostics tail is A8). Local gate green:
+  `:core:test` + `:app:assembleDebug`.
 - 2026-11-17 — **A5.6 landed — parity verification pass, A5
   code-complete**: skip-limit surface checked line-for-line against
   iOS — store (`isSkipLimitReached`/`skipLimitMessage`/
