@@ -15,19 +15,12 @@ before porting any view).
 ## Current Milestone
 
 **A4** — playback (the "it works" milestone). User said keep moving
-2026-11-16 while they test A3 on their phone in parallel. **A4.1
-landed** (player infrastructure); A4.2 next.
+2026-11-16 while they test A3 on their phone in parallel. **A4.1 +
+A4.2 landed** (player infrastructure + store playback surface);
+A4.3 next.
 
 ## Queue (pending, in order)
 
-- **A4.2 — store playback surface**: `player` owned by the store
-  (PlaybackClient), `PlayStation`/`TogglePlayback`/`SkipToNext`
-  intents, playlist fetch + playable filter, `queuedTrackTokens`
-  dedupe, fetchMoreTracks + 5/15/30 s backoff retry, skip-limit
-  handling (`handleSkipLimit` port: `skipLimitStationId` +
-  "stops asking"), `isPlayingCurrentStation` wiring, ad-skip refusal
-  copy, `lastStationId` persist, mode-change restart seam
-  (confirmation toast + playlist restart documented in the store).
 - **A4.3 — stations wiring + MiniPlayer**: StationsView row taps +
   hero play button call `.playStation`, playing-row glyph off
   `isPlayingCurrentStation` + quickmix row behavior; MainTabView
@@ -36,7 +29,9 @@ landed** (player infrastructure); A4.2 next.
   AirPlay route picker → out of scope, system output switching per
   AGENTS.md deprioritization).
 - **A4.4 — NowPlayingView + PlayerScrubber**: read the SwiftUI files
-  first, port view-for-view minus FeedbackBar (thumbs are A5).
+  first, port view-for-view minus FeedbackBar (thumbs are A5); shows
+  the skip-limit message + "Tuned to …" confirmation toast surfaces
+  (both landed in the store).
 - **A4.5 — robustness pass**: error states, session-expiry during
   playlist fetch, notification polish, QUEUE deltas.
 - **BLOCKED on user action — Waydroid smoke test**: the container
@@ -92,6 +87,27 @@ landed** (player infrastructure); A4.2 next.
 
 ## Log
 
+- 2026-11-16 — **A4.2 landed — store playback surface** (port of
+  AppStore's Playback section): store owns `val player` (PlaybackClient);
+  intents PlayStation/TogglePlayback/SkipToNext/SetPlaybackVolume;
+  `play(station)` — already-playing toggles instead of restarting,
+  playlist fetch + `streamURL != null` playable filter, "No playable
+  tracks" copy, currentStation set + cached-modes invalidation,
+  `queuedTrackTokens` dedupe set, `lastStationId` persist (hero lights
+  up), skip-limit clear on replay, `player.play(first, getOrNull(1))`
+  (the current+next prefetch); `fetchMoreTracks` on need-more + fresh
+  filter + 5/15/30 s `schedulePrefetchRetry` (max 3); `handleSkipLimit`
+  (skipLimitStationId + station-name copy + "stops asking", cancel
+  retry); ad-skip refusal copy; `prepareAdIfNeeded` (resolve + register
+  impression, best-effort, tracking-tokens log); `isSkipLimitReached` +
+  `skipLimitMessage` helpers; `isPlayingCurrentStation` wired via the
+  player-state collector; volume restore from preferences; the A3.5
+  mode-change seam completed — playing-station branch now shows
+  `showConfirmation("Tuned to …")` (3 s auto-clear) +
+  `restartWithNewPlaylist`; session-dead path stops the player +
+  clears the skip-limit mark. onTrackChanged observers: log +
+  prepareAd (history/lyrics/scrobbler observers documented as A5/A6/A8).
+  Local gate green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-16 — **A4.1 landed — player infrastructure**:
   `player/PlaybackService.kt` (Media3 port of PlayerService +
   NowPlayingService unified: ExoPlayer with audio-focus interruption

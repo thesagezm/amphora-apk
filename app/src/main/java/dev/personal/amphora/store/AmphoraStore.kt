@@ -27,9 +27,13 @@ import dev.personal.amphora.pandora.OkHttpLastFmTransport
 import dev.personal.amphora.pandora.OkHttpModesTransport
 import dev.personal.amphora.pandora.OkHttpPandoraTransport
 import dev.personal.amphora.pandora.OkHttpRadioBrowserTransport
+import dev.personal.amphora.player.PlaybackClient
+import dev.personal.amphora.player.PlaybackState
 import dev.personal.amphora.support.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import pandoracore.LastFmClient
 import pandoracore.LegacyPandoraClient
@@ -97,12 +101,6 @@ class AmphoraStore {
         preferencesStore.save(preferences)
     }
 
-    init {
-        // Non-secret preferences load eagerly; the Keystore session
-        // restores via the restore intent (zero network).
-        preferences = preferencesStore.load()
-    }
-
     // MARK: Observable state (stations surface)
 
     var stations: List<pandoracore.Station> by mutableStateOf(emptyList())
@@ -117,9 +115,9 @@ class AmphoraStore {
      *  the Home rows render it). */
     var skipLimitStationId: String? by mutableStateOf(null)
         private set
-    /** Whether the current Pandora station is actively playing. A4
-     *  wires this to the player; until then nothing plays, so it stays
-     *  false (the Home rows render their "playing" glyph off it). */
+    /** Whether the current Pandora station is actively playing (the
+     *  port of the views' `isCurrent && store.player.isPlaying`). The
+     *  Home rows render their "playing" glyph off it. */
     var isPlayingCurrentStation: Boolean by mutableStateOf(false)
         private set
     /** Whether Pandora hides explicit tracks for this account
@@ -136,6 +134,33 @@ class AmphoraStore {
             val id = preferences.lastStationId ?: return null
             return stations.firstOrNull { it.id == id }
         }
+
+    // MARK: Playback engine (A4 — the port of PlayerService ownership)
+
+    /**
+     * Playback engine. Owns the player, the audio session and the
+     * now-playing track; it never talks to the network. The store drives
+     * it and reads its state (the iOS store owns PlayerService directly;
+     * here the engine lives in a MediaSessionService and this client
+     * wrapper fronts it).
+     */
+    val player = PlaybackClient(context = AmphoraContextProvider.context)
+
+    /** True while a playlist request for a station is in flight. */
+    var isLoadingPlaylist: Boolean by mutableStateOf(false)
+        private set
+
+    /** Tracks already handed to the player — the next playlist must not
+     *  queue the same track twice. */
+    private var queuedTrackTokens: MutableSet<String> = mutableSetOf()
+
+    /** One backed-off prefetch retry after a failed prefetch (the port
+     *  of schedulePrefetchRetry's Task). */
+    private var prefetchRetryJob: Job? = null
+    private var prefetchRetryAttempts = 0
+
+    /** The in-flight advertisement resolve/register (best-effort). */
+    private var adJob: Job? = null
 
     // MARK: Observable state (search & create)
 
@@ -172,6 +197,14 @@ class AmphoraStore {
      *  concrete station while another one plays). */
     private var modesStationId: String? = null
 
+    // MARK: Observable state (playback confirmations)
+
+    /** A short confirmation shown in the player ("Tuned to …"), cleared
+     *  after a few seconds; a newer message replaces the pending one. */
+    var confirmationMessage: String? by mutableStateOf(null)
+        private set
+    private var confirmationJob: Job? = null
+
     private var searchJob: kotlinx.coroutines.Job? = null
 
     // MARK: Intents
@@ -201,6 +234,16 @@ class AmphoraStore {
                 launchIntent { loadStationModes(intent.station) }
             is Intent.SetStationMode ->
                 launchIntent { setStationMode(intent.mode, intent.station) }
+            is Intent.PlayStation -> launchIntent { play(intent.station) }
+            is Intent.TogglePlayback -> player.togglePlayback()
+            is Intent.SkipToNext -> skipToNext()
+            is Intent.SetPlaybackVolume -> {
+                // The slider moves the level live; this intent is the one
+                // that remembers it (the view sends it when the drag ends,
+                // so the disk is written once per gesture, not per frame).
+                player.setVolume(intent.volume)
+                updatePreferences { it.copy(playbackVolume = intent.volume) }
+            }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -221,6 +264,10 @@ class AmphoraStore {
             val mode: pandoracore.StationMode,
             val station: pandoracore.Station?,
         ) : Intent()
+        data class PlayStation(val station: pandoracore.Station) : Intent()
+        data object TogglePlayback : Intent()
+        data object SkipToNext : Intent()
+        data class SetPlaybackVolume(val volume: Float) : Intent()
         data object DismissError : Intent()
     }
 
@@ -231,6 +278,42 @@ class AmphoraStore {
 
     private fun launchIntent(block: suspend () -> Unit) {
         intentScope.launch { block() }
+    }
+
+    init {
+        // Non-secret preferences load eagerly; the Keystore session
+        // restores via the restore intent (zero network).
+        preferences = preferencesStore.load()
+        // The playback volume survives a relaunch. `null` (a file written
+        // before the key existed) means full volume.
+        player.setVolume(preferences.playbackVolume ?: 1f)
+        // The player asks for more tracks when its queue runs low — pithos
+        // preloads the next playlist when one song remains.
+        player.onNeedMoreTracks = { fetchMoreTracks() }
+        // A new track means a new per-track state surface. The rating
+        // reset, history record, sleep-timer check, lyrics load and
+        // Last.fm now-playing observers arrive with A5/A6/A8 — this unit
+        // wires the parts playback itself needs (ads).
+        player.onTrackChanged.add { track ->
+            if (track != null) {
+                AppLog.info(
+                    "track started: ${track.title} — ${track.artist}",
+                    AppLog.Category.playback,
+                )
+            } else {
+                AppLog.info("track queue empty", AppLog.Category.playback)
+            }
+            prepareAdIfNeeded(track)
+        }
+        // "Currently playing" for the Home rows and the hero: the iOS
+        // views compute `isCurrent && store.player.isPlaying`; this
+        // collector keeps the same value current on play/pause.
+        intentScope.launch {
+            player.state.collect { state ->
+                isPlayingCurrentStation = currentStation != null &&
+                    (state == PlaybackState.playing || state == PlaybackState.buffering)
+            }
+        }
     }
 
     private fun restoreSession() {
@@ -521,10 +604,19 @@ class AmphoraStore {
             stationModes = updated
             modesStationId = target.id
             stationModeChangedTick += 1
-            // The playing-station path ("a successful change starts a
-            // new song" — confirmation toast + playlist restart) is A4
-            // wiring with the player; tuning for next play is complete.
-            AppLog.info("station mode set for next play: ${mode.name} on \"${target.name}\"")
+            if (currentStation?.id == target.id && player.currentTrack.value != null) {
+                // "A successful change starts a new song": confirm and
+                // restart the playing station's playlist (its queued
+                // tracks belong to the previous mode).
+                showConfirmation("Tuned to ${mode.name}")
+                AppLog.info(
+                    "station mode set: ${mode.name} on \"${target.name}\"",
+                    AppLog.Category.playback,
+                )
+                restartWithNewPlaylist(target)
+            } else {
+                AppLog.info("station mode set for next play: ${mode.name} on \"${target.name}\"")
+            }
         } catch (error: Exception) {
             AppLog.error("station mode ${mode.name} failed: $error")
             record(error)
@@ -532,6 +624,248 @@ class AmphoraStore {
             isChangingMode = false
         }
     }
+
+    // MARK: Playback (the port of AppStore's Playback section)
+
+    /**
+     * Plays a station: fetches its playlist, starts the first track and
+     * queues the next one (prefetch). Tapping the station that is already
+     * playing toggles playback instead of restarting it.
+     */
+    private suspend fun play(station: pandoracore.Station) {
+        if (currentStation?.id == station.id && player.currentTrack.value != null) {
+            player.togglePlayback()
+            return
+        }
+        if (isLoadingPlaylist) return
+        lastErrorMessage = null
+        isLoadingPlaylist = true
+        try {
+            val playlist = session.getPlaylist(station)
+            val playable = playlist.tracks.filter { it.streamURL != null }
+            AppLog.info(
+                "playlist for \"${station.name}\": ${playlist.tracks.size} entries, " +
+                    "${playable.size} playable",
+                AppLog.Category.playback,
+            )
+            val first = playable.firstOrNull()
+            if (first == null) {
+                currentStation = station
+                lastErrorMessage = "No playable tracks in this station right now."
+                return
+            }
+            currentStation = station
+            // The player is singular. (iOS clears the radio hand-over
+            // state here; radio arrives with A7.)
+            // A different station invalidates the cached listening modes.
+            stationModes = null
+            modesStationId = null
+            queuedTrackTokens = playable.map { it.trackToken }.toMutableSet()
+            prefetchRetryAttempts = 0
+            prefetchRetryJob?.cancel()
+            updatePreferences { it.copy(lastStationId = station.id) }
+            // The station plays again — the limit (if there was one) is
+            // gone.
+            if (skipLimitStationId == station.id) {
+                skipLimitStationId = null
+            }
+            player.play(track = first, prefetching = playable.getOrNull(1))
+        } catch (error: PlaylistError.SkipLimitReached) {
+            // Pandora's daily skip limit: report it and stop asking.
+            handleSkipLimit(error, station)
+        } catch (error: Exception) {
+            AppLog.error(
+                "playlist for \"${station.name}\" failed: $error",
+                AppLog.Category.playback,
+            )
+            record(error)
+        } finally {
+            isLoadingPlaylist = false
+        }
+    }
+
+    /**
+     * Called by the player when its queue runs low — fetch the next
+     * playlist for the current station and queue the new tracks.
+     */
+    private fun fetchMoreTracks() {
+        val station = currentStation ?: return
+        if (isLoadingPlaylist) return
+        isLoadingPlaylist = true
+        intentScope.launch {
+            try {
+                val playlist = session.getPlaylist(station)
+                val fresh = playlist.tracks.filter {
+                    it.streamURL != null && it.trackToken !in queuedTrackTokens
+                }
+                if (fresh.isEmpty()) {
+                    AppLog.info(
+                        "prefetch playlist: nothing new to queue",
+                        AppLog.Category.playback,
+                    )
+                    return@launch
+                }
+                AppLog.info(
+                    "prefetch playlist: queueing ${fresh.size} more tracks",
+                    AppLog.Category.playback,
+                )
+                queuedTrackTokens.addAll(fresh.map { it.trackToken })
+                prefetchRetryAttempts = 0
+                prefetchRetryJob?.cancel()
+                player.enqueue(fresh)
+            } catch (error: PlaylistError.SkipLimitReached) {
+                // The daily skip limit: the server refuses more tracks.
+                // Retrying would only hammer it — report and stop.
+                handleSkipLimit(error, station)
+            } catch (error: Exception) {
+                // A failed prefetch is not fatal — the current track keeps
+                // playing. One backed-off retry follows; a network blip
+                // near the queue's end must not dead-end playback.
+                AppLog.error("prefetch playlist failed: $error", AppLog.Category.playback)
+                record(error)
+                schedulePrefetchRetry()
+            } finally {
+                isLoadingPlaylist = false
+            }
+        }
+    }
+
+    /**
+     * One delayed prefetch retry after a failure, backing off
+     * 5 s / 15 s / 30 s, then giving up — the next user action
+     * (playing the station again) fetches fresh.
+     */
+    private fun schedulePrefetchRetry() {
+        prefetchRetryJob?.cancel()
+        if (prefetchRetryAttempts >= 3) return
+        val delays = longArrayOf(5_000, 15_000, 30_000)
+        val backoff = delays[prefetchRetryAttempts]
+        prefetchRetryAttempts += 1
+        prefetchRetryJob = intentScope.launch {
+            delay(backoff)
+            AppLog.info(
+                "prefetch: retrying in-case the queue ran dry",
+                AppLog.Category.playback,
+            )
+            fetchMoreTracks()
+        }
+    }
+
+    /** Skip to the next track (user intent). pydora: "Cannot skip
+     *  advertisements" — the impression plays out. (The radio stop-over
+     *  arrives with A7.) */
+    private fun skipToNext() {
+        if (player.currentTrack.value?.isAdvertisement == true) {
+            AppLog.info("skip requested during an ad — refused", AppLog.Category.playback)
+            lastErrorMessage = "Advertisements can't be skipped."
+            return
+        }
+        player.skipToNext()
+    }
+
+    /** Records Pandora's refusal to hand out more tracks: the limit is
+     *  reported to the user and the app stops asking for this station —
+     *  no prefetch, no retry. The playback that is already queued keeps
+     *  playing. */
+    private fun handleSkipLimit(error: PlaylistError.SkipLimitReached, station: pandoracore.Station) {
+        skipLimitStationId = station.id
+        lastErrorMessage =
+            "Pandora's daily skip limit was reached for \"${station.name}\". Try again later."
+        prefetchRetryJob?.cancel()
+        prefetchRetryJob = null
+        AppLog.info(
+            "skip limit reached for \"${station.name}\" " +
+                "(${if (error.playlistEnded) "playlist end" else "skip refused"}) " +
+                "— not requesting more tracks",
+            AppLog.Category.playback,
+        )
+    }
+
+    /**
+     * Resolves + registers the impression for an advertisement that just
+     * started (pydora `AdItem.prepare_playback`). Only ads carrying
+     * inline audio reach the queue (`streamURL` filter in `play` /
+     * `fetchMoreTracks`), so by the time this runs the ad is audible.
+     * Best-effort: `prepareAd` swallows registration failures; a
+     * metadata failure here only logs — playback continues.
+     */
+    private fun prepareAdIfNeeded(track: pandoracore.Track?) {
+        adJob?.cancel()
+        if (track == null || !track.isAdvertisement || track.adToken == null) return
+        AppLog.info(
+            "advertisement started: \"${track.title}\" — registering impression",
+            AppLog.Category.playback,
+        )
+        adJob = intentScope.launch {
+            try {
+                val ad = session.prepareAd(track)
+                AppLog.info(
+                    "ad impression registered (${ad.trackingTokens.size} tracking tokens)",
+                    AppLog.Category.playback,
+                )
+            } catch (error: Exception) {
+                AppLog.error(
+                    "ad prepare failed (playback continues): $error",
+                    AppLog.Category.playback,
+                )
+            }
+        }
+    }
+
+    /**
+     * Fetches a fresh playlist for `station` and starts its first
+     * track, replacing the queue (whose tracks belong to the previous
+     * mode). `PlaybackClient.play` resets the queue.
+     */
+    private suspend fun restartWithNewPlaylist(station: pandoracore.Station) {
+        if (isLoadingPlaylist) return
+        isLoadingPlaylist = true
+        try {
+            val playlist = session.getPlaylist(station)
+            val playable = playlist.tracks.filter { it.streamURL != null }
+            val first = playable.firstOrNull()
+            if (first == null) {
+                lastErrorMessage = "No playable tracks in this station right now."
+                return
+            }
+            queuedTrackTokens = playable.map { it.trackToken }.toMutableSet()
+            prefetchRetryAttempts = 0
+            prefetchRetryJob?.cancel()
+            player.play(track = first, prefetching = playable.getOrNull(1))
+        } catch (error: PlaylistError.SkipLimitReached) {
+            handleSkipLimit(error, station)
+        } catch (error: Exception) {
+            AppLog.error("restart after tuning failed: $error", AppLog.Category.playback)
+            record(error)
+        } finally {
+            isLoadingPlaylist = false
+        }
+    }
+
+    /** Shows a short confirmation in the player, clearing it after a
+     *  few seconds. A newer message replaces the pending one. */
+    private fun showConfirmation(message: String) {
+        confirmationJob?.cancel()
+        confirmationMessage = message
+        confirmationJob = intentScope.launch {
+            delay(3_000)
+            confirmationMessage = null
+        }
+    }
+
+    // MARK: Skip limit
+
+    /** `true` when Pandora's daily skip limit stopped the current
+     *  station. The player shows it; the station list marks the row. */
+    val isSkipLimitReached: Boolean
+        get() {
+            val id = skipLimitStationId ?: return false
+            return currentStation?.id == id
+        }
+
+    /** The user-facing explanation of the skip limit. */
+    val skipLimitMessage: String
+        get() = "Pandora's daily skip limit was reached for this station. Try again later."
 
     // MARK: Error copy (port of `AppStore.userMessage(for:)` / `record`)
 
@@ -572,6 +906,11 @@ class AmphoraStore {
             AppLog.error("session unrecoverable — returning to sign-in", AppLog.Category.app)
             lastErrorMessage = "Your Pandora session ended. Sign in again."
             authPhase = AuthPhase.signedOut
+            // The player must not keep a dead session's audio running
+            // (the iOS signOut path stops the player and clears the
+            // skip-limit mark; the radio clear arrives with A7).
+            player.stop()
+            skipLimitStationId = null
         }
     }
 }
