@@ -14,16 +14,23 @@ before porting any view).
 
 ## Current Milestone
 
-**A6** — lyrics (lrclib + translation + fallbacks + romanization):
-**A6.1–A6.2 landed (milestone code-complete)**. A5 landed
-code-complete and CI-green before it (A5.1–A5.6); A4 before that.
-Keep-moving instructions received for A4→A5→A6 while the user tests in
-parallel; the phone demo checklists (A4 + A5, below) are still owed.
-Per AGENTS.md, A7 does not begin until the user confirms A4/A5/A6 on
-their phone or says keep moving again.
+**A7** — radio mode (RadioBrowser UI, favorites/recents/custom stations,
+ICY probe + live-lag scheduling). User directive 2026-11-17: "start from
+A7" (the keep-moving instruction AGENTS.md asks for). A6 landed
+code-complete and CI-green before it (A6.1–A6.2); A5 (A5.1–A5.6) and A4
+before that. The phone demo checklists (A4 + A5 + A6, below) are still
+owed. Unit plan: A7.1 discovery controller + data layer → A7.2 playback
+wiring → A7.3 RadioView UI → A7.4 ICY probe + identification → A7.5
+player radio surfaces + parity pass.
 
 ## Queue (pending, in order)
 
+- **A6 verification (user)**: play a song → tap the quote button in
+  the full player → synced lyrics scroll with playback, tap a line
+  seeks; foreign song → auto/manual Translate ("Translated"/"Already
+  in English"/failure with Retry); a non-Latin song shows the
+  romanization reading line; a song with no lyrics shows "No lyrics"
+  + Retry.
 - **A5 verification (user)**: thumbs up/down on the full player (tap
   the active one to undo), the player ⋯ menu (Sleep Timer… incl. the
   live label, Tune Station…, Bookmark Song/Artist → "Song/Artist
@@ -113,6 +120,30 @@ their phone or says keep moving again.
   `Amphora/UI/*` for every view's design).
 
 ## Log
+
+- 2026-11-17 — **A7.1 landed — RadioController + the store's radio
+  data layer** (user said "start from A7"): `store/RadioController.kt`
+  (port of RadioController.swift: the Mode sealed class —
+  Popular/Search/Country/Tag with `title`; results + didLoadResults +
+  isLoading + errorMessage + canLoadMore + isLoadingMore +
+  moreErrorMessage; 50-per-page "Show More" with uuid-dedupe across
+  page boundaries; fetch-once countries/tags catalogs with
+  retryX clearing; the 400 ms search debounce via a setter that
+  cancels + relaunches; the shared run() — a newer call cancels the
+  older one, cancelled tasks never touch state; the RadioBrowserError
+  → user-copy port) + the store grows `radioFavorites`/`radioRecents`/
+  `radioCustomStations` (loaded from preferences at init — device
+  data) + helpers isRadioFavorite/isRadioCustom + intents
+  ToggleRadioFavorite (insert-at-0 then the name sort — the
+  localizedCaseInsensitiveCompare port, lowercase delta documented) /
+  RemoveRadioRecent / ClearRadioRecents / Add/Update/Delete
+  RadioCustomStation (update follows the new identity through
+  favorites + recents; delete removes it everywhere so stale entries
+  never 404). Store rename: the `RadioBrowserClient` val `radio` →
+  private `radioClient`; `val radio` is now the RadioController (iOS's
+  exact name). Documented A7.2 seams: update/delete's playing-snapshot
+  lines + recordRadioRecent. Local gate green: `:core:test` +
+  `:app:assembleDebug`.
 
 - 2026-11-17 — **A6.2 landed — LyricsPanel + the player lyrics
   toggle, A6 code-complete**: `ui/LyricsPanel.kt` (port of

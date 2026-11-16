@@ -108,7 +108,15 @@ class AmphoraStore {
         store = sessionStore,
     )
     val lastFm = LastFmClient(transport = OkHttpLastFmTransport())
-    val radio = RadioBrowserClient(transport = OkHttpRadioBrowserTransport())
+    /** The internet-radio directory client (radio-browser.info). The
+     *  Radio tab's discovery state goes through `radio` — one shared
+     *  client, so the mirror rotation and the play-click ping see the
+     *  same servers. */
+    private val radioClient = RadioBrowserClient(transport = OkHttpRadioBrowserTransport())
+
+    /** The Radio tab's discovery state (search / popular / countries /
+     *  tags — the port of the iOS `radio: RadioController`). */
+    val radio = RadioController(client = radioClient)
 
     // MARK: Observable state (auth surface)
 
@@ -300,6 +308,20 @@ class AmphoraStore {
     /** Disk persistence for the history (JSON file in filesDir). */
     private val historyStore = HistoryStore()
 
+    // MARK: Observable state (radio — the Shortwave port)
+
+    /** Starred radio stations, device-local (Shortwave's favorites). */
+    var radioFavorites: List<pandoracore.RadioStation> by mutableStateOf(emptyList())
+        private set
+
+    /** Recently played radio stations, most recent first. */
+    var radioRecents: List<pandoracore.RadioStation> by mutableStateOf(emptyList())
+        private set
+
+    /** User-added custom stations (a name + a raw stream URL). */
+    var radioCustomStations: List<pandoracore.RadioStation> by mutableStateOf(emptyList())
+        private set
+
     // MARK: Observable state (lyrics)
 
     /** The lyrics of the current track (the core provider chain's
@@ -392,6 +414,22 @@ class AmphoraStore {
                 loadLyrics(player.currentTrack.value, force = true)
             is Intent.TranslateLyrics ->
                 requestTranslation(player.currentTrack.value, manual = true)
+            is Intent.ToggleRadioFavorite ->
+                toggleRadioFavorite(intent.station)
+            is Intent.RemoveRadioRecent -> {
+                radioRecents = radioRecents.filterNot { it.uuid == intent.station.uuid }
+                updatePreferences { it.copy(radioRecents = radioRecents) }
+            }
+            is Intent.ClearRadioRecents -> {
+                radioRecents = emptyList()
+                updatePreferences { it.copy(radioRecents = radioRecents) }
+            }
+            is Intent.AddRadioCustomStation ->
+                addRadioCustomStation(intent.name, intent.url)
+            is Intent.UpdateRadioCustomStation ->
+                updateRadioCustomStation(intent.station, intent.name, intent.url)
+            is Intent.DeleteRadioCustomStation ->
+                deleteRadioCustomStation(intent.station)
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -436,6 +474,17 @@ class AmphoraStore {
         ) : Intent()
         data object RefreshLyrics : Intent()
         data object TranslateLyrics : Intent()
+        data class ToggleRadioFavorite(val station: pandoracore.RadioStation) : Intent()
+        data class RemoveRadioRecent(val station: pandoracore.RadioStation) : Intent()
+        data object ClearRadioRecents : Intent()
+        /** A custom station from a raw stream URL (validated in the form). */
+        data class AddRadioCustomStation(val name: String, val url: String) : Intent()
+        data class UpdateRadioCustomStation(
+            val station: pandoracore.RadioStation,
+            val name: String,
+            val url: String,
+        ) : Intent()
+        data class DeleteRadioCustomStation(val station: pandoracore.RadioStation) : Intent()
         data object DismissError : Intent()
     }
 
@@ -452,6 +501,11 @@ class AmphoraStore {
         // Non-secret preferences load eagerly; the Keystore session
         // restores via the restore intent (zero network).
         preferences = preferencesStore.load()
+        // The radio favorites / recents / custom stations ride in the
+        // same preferences file (iOS reads them out at init too).
+        radioFavorites = preferences.radioFavorites
+        radioRecents = preferences.radioRecents
+        radioCustomStations = preferences.radioCustomStations
         // The play history is device data — it survives sign-out and
         // relaunch (iOS keeps it on sign-out too).
         history = historyStore.load()
@@ -1310,6 +1364,93 @@ class AmphoraStore {
         lyricsCache[token] = updated
         if (isCurrentLyricsToken(token)) {
             lyrics = updated
+        }
+    }
+
+    // MARK: Radio favorites (device-local, the Shortwave port)
+
+    /** Stars or unstars a station (device-local favorites). */
+    private fun toggleRadioFavorite(station: pandoracore.RadioStation) {
+        radioFavorites = if (radioFavorites.any { it.uuid == station.uuid }) {
+            radioFavorites.filterNot { it.uuid == station.uuid }
+        } else {
+            listOf(station) + radioFavorites
+        }
+        // Port delta: Swift's localizedCaseInsensitiveCompare sort
+        // becomes a lowercase sort — the same stable, never-shuffle
+        // choice the station list's displayOrder made.
+        radioFavorites = radioFavorites.sortedBy { it.name.lowercase() }
+        updatePreferences { it.copy(radioFavorites = radioFavorites) }
+    }
+
+    /** True when the station is starred — row state for the Radio tab. */
+    fun isRadioFavorite(station: pandoracore.RadioStation): Boolean =
+        radioFavorites.any { it.uuid == station.uuid }
+
+    // MARK: Custom radio stations (radio R5)
+
+    /** True when the station is one the user added by URL (not a
+     *  directory entry) — drives the Radio tab's edit/delete menus and
+     *  the click-ping skip. */
+    fun isRadioCustom(station: pandoracore.RadioStation): Boolean =
+        radioCustomStations.any { it.uuid == station.uuid }
+
+    /**
+     * Saves a custom station (name + raw stream URL). The form sheet
+     * validates both; the store just persists. Saving is synchronous —
+     * no network — so the sheet dismisses immediately.
+     */
+    private fun addRadioCustomStation(name: String, url: String) {
+        val station = pandoracore.RadioStation(
+            uuid = java.util.UUID.randomUUID().toString().lowercase(),
+            name = name,
+            streamURL = url,
+        )
+        radioCustomStations = radioCustomStations + station
+        updatePreferences { it.copy(radioCustomStations = radioCustomStations) }
+        AppLog.info("radio: added custom station \"$name\"", AppLog.Category.network)
+    }
+
+    /**
+     * Applies a form edit: same uuid, new name/URL. The user's other
+     * lists follow the new identity (the playing snapshot follows it
+     * too — that line lands with A7.2's `currentRadioStation`).
+     */
+    private fun updateRadioCustomStation(
+        station: pandoracore.RadioStation,
+        name: String,
+        url: String,
+    ) {
+        val index = radioCustomStations.indexOfFirst { it.uuid == station.uuid }
+        if (index < 0) return
+        val updated = pandoracore.RadioStation(uuid = station.uuid, name = name, streamURL = url)
+        radioCustomStations = radioCustomStations.toMutableList().also { it[index] = updated }
+        if (radioFavorites.any { it.uuid == updated.uuid }) {
+            radioFavorites = radioFavorites.map { if (it.uuid == updated.uuid) updated else it }
+            updatePreferences { it.copy(radioFavorites = radioFavorites) }
+        }
+        if (radioRecents.any { it.uuid == updated.uuid }) {
+            radioRecents = radioRecents.map { if (it.uuid == updated.uuid) updated else it }
+            updatePreferences { it.copy(radioRecents = radioRecents) }
+        }
+        updatePreferences { it.copy(radioCustomStations = radioCustomStations) }
+    }
+
+    /**
+     * Deletes a custom station everywhere: the list, favorites and
+     * recents (it is gone, so stale entries would 404), and playback if
+     * it was the one playing (that stop lands with A7.2's `stopRadio`).
+     */
+    private fun deleteRadioCustomStation(station: pandoracore.RadioStation) {
+        radioCustomStations = radioCustomStations.filterNot { it.uuid == station.uuid }
+        updatePreferences { it.copy(radioCustomStations = radioCustomStations) }
+        if (radioFavorites.any { it.uuid == station.uuid }) {
+            radioFavorites = radioFavorites.filterNot { it.uuid == station.uuid }
+            updatePreferences { it.copy(radioFavorites = radioFavorites) }
+        }
+        if (radioRecents.any { it.uuid == station.uuid }) {
+            radioRecents = radioRecents.filterNot { it.uuid == station.uuid }
+            updatePreferences { it.copy(radioRecents = radioRecents) }
         }
     }
 
