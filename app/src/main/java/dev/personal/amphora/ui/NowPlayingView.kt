@@ -10,13 +10,13 @@
 //  (ArtworkThemeController); every static surface is a matte palette
 //  shade, never glass.
 //
-//  Arriving with their own units (kept out so nothing ships inert):
-//  - Radio surfaces (LIVE badge, identify status, Identify Song menu
-//    item, stop, the radio guard on the lyrics toolbar button): A7 —
-//    the menu's radio branch guards the song-level items away there;
-//    until A7 the menu always shows the song branch.
-//  - The AirPlay route picker + route indicator: out of scope
-//    (AGENTS.md deprioritizes the output picker).
+//  Radio surfaces (the A7 port): LIVE badge + identify status beside
+//  it, the Identify Song menu branch (guarding the song-level items
+//  away for radio), the radio guard on the lyrics toolbar button, the
+//  radio artwork (identified song's cover, else the station tile),
+//  scrubber hidden for radio, and next = stop.
+//  Out of scope: the AirPlay route picker + route indicator
+//  (AGENTS.md deprioritizes the output picker).
 //
 //  Port deltas (documented per AGENTS.md):
 //  - iOS wraps the player in a NavigationStack sheet; here MainTabView
@@ -35,6 +35,11 @@ package dev.personal.amphora.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -67,6 +72,7 @@ import androidx.compose.material.icons.rounded.HearingDisabled
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -90,6 +96,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -101,6 +108,7 @@ import dev.personal.amphora.store.ArtworkThemeController
 import dev.personal.amphora.support.TimeFormat
 import dev.personal.amphora.support.rememberHaptics
 import pandoracore.Track
+import pandoracore.isRadio
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -111,6 +119,7 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
     val track by store.player.currentTrack.collectAsState()
     val state by store.player.state.collectAsState()
     val errorMessage by store.player.errorMessage.collectAsState()
+    val radioIdentification = store.radioIdentification
     var isShowingActions by remember { mutableStateOf(false) }
     var isShowingTuning by remember { mutableStateOf(false) }
     var isShowingSleepTimer by remember { mutableStateOf(false) }
@@ -122,6 +131,13 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
 
     val playing = state == dev.personal.amphora.player.PlaybackState.playing ||
         state == dev.personal.amphora.player.PlaybackState.buffering
+
+    // `true` while a live radio stream is the current track.
+    val isRadioStream = track?.isRadio == true
+    // A radio stream has no lyrics — unless the station's current song
+    // has been identified; its lyrics are looked up like any song's.
+    val showsLyricsToggle = !isRadioStream ||
+        radioIdentification == dev.personal.amphora.store.RadioIdentification.identified
 
     Box(
         modifier = Modifier
@@ -155,9 +171,7 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                         // Every secondary action in one place (iOS's
                         // actionsMenu). This is the app's only
                         // sleep-timer surface entry — one sleep control,
-                        // no duplicate moons. The radio-specific items
-                        // (Identify Song) arrive with A7; the song-level
-                        // bookmark/hide items land with A5.3.
+                        // no duplicate moons.
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -181,51 +195,73 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                                 isShowingSleepTimer = true
                             },
                         )
-                        DropdownMenuItem(
-                            text = { Text("Tune Station…", color = labelColor(theme)) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Tune, contentDescription = null, tint = labelColor(theme))
-                            },
-                            onClick = {
-                                isShowingActions = false
-                                isShowingTuning = true
-                            },
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Bookmark Song", color = labelColor(theme)) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = labelColor(theme))
-                            },
-                            onClick = {
-                                isShowingActions = false
-                                haptics.light()
-                                store.send(AmphoraStore.Intent.BookmarkCurrentSong)
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Bookmark Artist", color = labelColor(theme)) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.PersonAdd, contentDescription = null, tint = labelColor(theme))
-                            },
-                            onClick = {
-                                isShowingActions = false
-                                haptics.light()
-                                store.send(AmphoraStore.Intent.BookmarkCurrentArtist)
-                            },
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Hide This Song", color = labelColor(theme)) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.HearingDisabled, contentDescription = null, tint = labelColor(theme))
-                            },
-                            onClick = {
-                                isShowingActions = false
-                                haptics.light()
-                                store.send(AmphoraStore.Intent.SleepCurrentTrack)
-                            },
-                        )
+                        if (isRadioStream) {
+                            // A radio stream has no song behind it, so
+                            // the song-level actions (tuning a Pandora
+                            // station, bookmarking, hiding) would all
+                            // be no-ops — not offered. The Identify
+                            // button takes their place: retries the
+                            // announced song's artwork + lyrics lookup;
+                            // before the first announcement it
+                            // reconnects the probe.
+                            DropdownMenuItem(
+                                text = { Text("Identify Song", color = labelColor(theme)) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.Search, contentDescription = null, tint = labelColor(theme))
+                                },
+                                onClick = {
+                                    isShowingActions = false
+                                    haptics.light()
+                                    store.send(AmphoraStore.Intent.IdentifyRadioSong)
+                                },
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Tune Station…", color = labelColor(theme)) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.Tune, contentDescription = null, tint = labelColor(theme))
+                                },
+                                onClick = {
+                                    isShowingActions = false
+                                    isShowingTuning = true
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Bookmark Song", color = labelColor(theme)) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = labelColor(theme))
+                                },
+                                onClick = {
+                                    isShowingActions = false
+                                    haptics.light()
+                                    store.send(AmphoraStore.Intent.BookmarkCurrentSong)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Bookmark Artist", color = labelColor(theme)) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.PersonAdd, contentDescription = null, tint = labelColor(theme))
+                                },
+                                onClick = {
+                                    isShowingActions = false
+                                    haptics.light()
+                                    store.send(AmphoraStore.Intent.BookmarkCurrentArtist)
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Hide This Song", color = labelColor(theme)) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.HearingDisabled, contentDescription = null, tint = labelColor(theme))
+                                },
+                                onClick = {
+                                    isShowingActions = false
+                                    haptics.light()
+                                    store.send(AmphoraStore.Intent.SleepCurrentTrack)
+                                },
+                            )
+                        }
                     }
                 }
                 Text(
@@ -238,20 +274,23 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                     textAlign = TextAlign.Center,
                 )
                 // The lyrics toggle (iOS: quote.bubble/quote.bubble.fill
-                // — one Material glyph, tinted while shown; the radio
-                // guard on the button arrives with A7).
-                IconButton(
-                    onClick = { isShowingLyrics = !isShowingLyrics },
-                    modifier = Modifier.semantics {
-                        contentDescription =
-                            if (isShowingLyrics) "Hide lyrics" else "Show lyrics"
-                    },
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.FormatQuote,
-                        contentDescription = null,
-                        tint = if (isShowingLyrics) theme.accent else labelColor(theme),
-                    )
+                // — one Material glyph, tinted while shown). A radio
+                // stream has no lyrics — unless the station's current
+                // song has been identified.
+                if (showsLyricsToggle) {
+                    IconButton(
+                        onClick = { isShowingLyrics = !isShowingLyrics },
+                        modifier = Modifier.semantics {
+                            contentDescription =
+                                if (isShowingLyrics) "Hide lyrics" else "Show lyrics"
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.FormatQuote,
+                            contentDescription = null,
+                            tint = if (isShowingLyrics) theme.accent else labelColor(theme),
+                        )
+                    }
                 }
                 TextButton(
                     onClick = onDismiss,
@@ -315,9 +354,14 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                         .padding(top = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
-                    Artwork(current)
+                    Artwork(store, current)
                     TrackHeader(store, current)
-                    Scrubber(store)
+                    // A live stream has no timeline — a dead
+                    // zero-length scrubber would only look broken. The
+                    // LIVE badge takes its place (in PlayerControls).
+                    if (!current.isRadio) {
+                        Scrubber(store)
+                    }
                     PlayerControls(
                         store = store,
                         track = current,
@@ -379,40 +423,70 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
 
 /** The flexible square: grows with the space left over and yields it
  *  again when the controls need room — the Apple-Music artwork. The
- *  port sizes it to the width (see the header's port deltas). */
+ *  port sizes it to the width (see the header's port deltas). A radio
+ *  stream shows the identified song's cover when there is one, else the
+ *  generated station tile (at cover size a tiny favicon is worse than
+ *  the tile, so the tile wins unless the station really has a big
+ *  logo). */
 @Composable
-private fun Artwork(track: Track) {
+private fun Artwork(store: AmphoraStore, track: Track) {
     val palette = ArtworkThemeController.colors
-    CachedArtwork(
-        urlString = track.artworkUrl,
-        cornerRadius = Theme.radiusArtwork,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 28.dp)
-            .aspectRatio(1f)
-            .shadow(
-                elevation = 24.dp,
-                shape = RoundedCornerShape(Theme.radiusArtwork),
-                ambientColor = Color.Black.copy(alpha = 0.45f),
-                spotColor = Color.Black.copy(alpha = 0.45f),
+    val framed: Modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 28.dp)
+        .aspectRatio(1f)
+        .shadow(
+            elevation = 24.dp,
+            shape = RoundedCornerShape(Theme.radiusArtwork),
+            ambientColor = Color.Black.copy(alpha = 0.45f),
+            spotColor = Color.Black.copy(alpha = 0.45f),
+        )
+        .shadow(
+            elevation = 40.dp,
+            shape = RoundedCornerShape(Theme.radiusArtwork),
+            ambientColor = palette.accent.asColor().copy(alpha = 0.18f),
+            spotColor = palette.accent.asColor().copy(alpha = 0.18f),
+        )
+    if (track.isRadio) {
+        val songArtwork = store.radioSongArtwork
+        if (songArtwork != null) {
+            CachedArtwork(
+                urlString = songArtwork.largeArtworkURL,
+                cornerRadius = Theme.radiusArtwork,
+                modifier = framed,
             )
-            .shadow(
-                elevation = 40.dp,
-                shape = RoundedCornerShape(Theme.radiusArtwork),
-                ambientColor = palette.accent.asColor().copy(alpha = 0.18f),
-                spotColor = palette.accent.asColor().copy(alpha = 0.18f),
-            ),
-    )
+        } else {
+            RadioStationArtwork(
+                stationName = track.title,
+                faviconURL = track.artworkUrl,
+                cornerRadius = Theme.radiusArtwork,
+                minimumArtworkPixels = 200,
+                modifier = framed,
+            )
+        }
+    } else {
+        CachedArtwork(
+            urlString = track.artworkUrl,
+            cornerRadius = Theme.radiusArtwork,
+            modifier = framed,
+        )
+    }
 }
 
 /**
  * Apple-Music-style block: left-aligned title, artist in the artwork
  * accent, album beneath, and the stream quality as a matte chip on the
  * trailing edge.
+ *
+ * A radio station's identified song takes the header: the stream is
+ * still what plays, but the song is what the user cares about — the
+ * station stays visible beneath it ("on <station>").
  */
 @Composable
 private fun TrackHeader(store: AmphoraStore, track: Track) {
     val palette = ArtworkThemeController.colors
+    // A radio stream's identified song owns the header.
+    val song = if (track.isRadio) store.radioNowPlaying else null
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -425,20 +499,31 @@ private fun TrackHeader(store: AmphoraStore, track: Track) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = track.title,
+                text = song?.title ?: track.title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 maxLines = 2,
             )
-            Text(
-                text = track.artist,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.accent.asColor().copy(alpha = 0.9f),
-                maxLines = 1,
-            )
-            if (track.album.isNotEmpty()) {
+            if (song?.artist != null) {
+                Text(
+                    text = song.artist.orEmpty(),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.accent.asColor().copy(alpha = 0.9f),
+                    maxLines = 1,
+                )
+            } else if (song == null) {
+                // No song identified — the stream's own caption.
+                Text(
+                    text = track.artist,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.accent.asColor().copy(alpha = 0.9f),
+                    maxLines = 1,
+                )
+            }
+            if (!track.isRadio && track.album.isNotEmpty()) {
                 Text(
                     text = track.album,
                     fontSize = 15.sp,
@@ -448,17 +533,37 @@ private fun TrackHeader(store: AmphoraStore, track: Track) {
             }
             // The station the track came from (AGENTS.md's Now Playing
             // list: artwork, title, artist, station, progress, skips).
-            store.currentStation?.name?.let { stationName ->
-                Text(
-                    text = stationName,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White.copy(alpha = 0.65f),
-                    maxLines = 1,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Playing on $stationName"
-                    },
-                )
+            // A radio stream's title *is* the station name — the line
+            // appears only once a song is identified, as
+            // "on <station>".
+            if (track.isRadio) {
+                if (song != null) {
+                    store.currentRadioStation?.name?.let { stationName ->
+                        Text(
+                            text = "on $stationName",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White.copy(alpha = 0.65f),
+                            maxLines = 1,
+                            modifier = Modifier.semantics {
+                                contentDescription = "Playing on $stationName"
+                            },
+                        )
+                    }
+                }
+            } else {
+                store.currentStation?.name?.let { stationName ->
+                    Text(
+                        text = stationName,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Playing on $stationName"
+                        },
+                    )
+                }
             }
         }
         QualityChip(track)
@@ -533,8 +638,8 @@ private fun Scrubber(store: AmphoraStore) {
 // MARK: Controls
 
 /**
- * Everything below the artwork: ad badge, skip-limit badge, transport,
- * volume, feedback, up next. (The radio surfaces are A7.)
+ * Everything below the artwork: ad badge, LIVE badge + identify status,
+ * skip-limit badge, transport, volume, feedback, up next.
  */
 @Composable
 private fun PlayerControls(
@@ -561,6 +666,12 @@ private fun PlayerControls(
             // labeled, unratable and unskippable by protocol.
             AdBadge()
         }
+        if (track.isRadio) {
+            // The song identification beside the LIVE badge (the
+            // counterpart of the advertisement badge: it says what the
+            // slot is).
+            RadioIdentifyStatus(store, haptics)
+        }
         if (skipLimitReached) {
             SkipLimitBadge(store)
         }
@@ -576,10 +687,9 @@ private fun PlayerControls(
             onLive = onVolumeLive,
             onSettled = onVolumeSettled,
         )
-        if (!track.isAdvertisement) {
-            // A live radio stream is not a song — there is nothing to
-            // rate (the synthetic `radio.<uuid>` token); that guard
-            // arrives with A7's radio tracks.
+        if (!track.isAdvertisement && !track.isRadio) {
+            // A radio stream is not a song: there is nothing to rate —
+            // the thumbs would fire at a synthetic `radio.<uuid>` token.
             FeedbackBar(store = store, accent = ArtworkThemeController.colors.accent.asColor())
         }
         UpNext(
@@ -633,9 +743,138 @@ private fun SkipLimitBadge(store: AmphoraStore) {
 }
 
 /**
+ * The LIVE indicator of a radio stream: a pulsing dot next to the
+ * word, in the same capsule language as the advertisement badge. It
+ * replaces the scrubber — a live stream has no length, so a progress
+ * bar over nothing would read as a broken control.
+ */
+@Composable
+private fun LiveBadge() {
+    val pulse = rememberInfiniteTransition(label = "live-pulse")
+    val dotOpacity by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1100, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "live-dot",
+    )
+    Row(
+        modifier = Modifier
+            .background(Theme.tokens().playerSurface, RoundedCornerShape(50))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Live radio stream"
+            },
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .graphicsLayer { alpha = dotOpacity }
+                .background(Color(0xFFFF3B30), CircleShape),
+        )
+        Text(
+            text = "LIVE",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp,
+            color = Color.White.copy(alpha = 0.6f),
+        )
+    }
+}
+
+/**
+ * The song identification beside the LIVE badge: a spinner while the
+ * first announcement is awaited, an honest note when the station
+ * announces nothing, and the Identify affordance in the meantime
+ * (AGENTS.md: honest states). An identified song needs nothing here —
+ * it is in the header and the artwork.
+ */
+@Composable
+private fun RadioIdentifyStatus(
+    store: AmphoraStore,
+    haptics: dev.personal.amphora.support.Haptics,
+) {
+    val theme = Theme.tokens()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LiveBadge()
+        when (store.radioIdentification) {
+            dev.personal.amphora.store.RadioIdentification.identifying -> {
+                // Tappable: a fresh probe connection often carries the
+                // current title within the first metadata interval.
+                Row(
+                    modifier = Modifier
+                        .background(theme.playerSurface, RoundedCornerShape(50))
+                        .clickable {
+                            haptics.light()
+                            store.send(AmphoraStore.Intent.IdentifyRadioSong)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .semantics { contentDescription = "Identify the current song" },
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        color = Color.White.copy(alpha = 0.55f),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        text = "Identify",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = theme.accent,
+                    )
+                }
+            }
+            dev.personal.amphora.store.RadioIdentification.stationAnnouncesNothing -> {
+                Text(
+                    text = "No song announcements",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+            }
+            dev.personal.amphora.store.RadioIdentification.identified -> {
+                if (store.isIdentifyingRadioSong) {
+                    Row(
+                        modifier = Modifier
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color.White.copy(alpha = 0.55f),
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Text(
+                            text = "Looking up artwork…",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.6f),
+                        )
+                    }
+                }
+            }
+            dev.personal.amphora.store.RadioIdentification.inactive -> Unit
+        }
+    }
+}
+
+/**
  * The transport: matched side glyphs around the main play/pause, which
  * sits in the accent-filled circle the mini player and the Home hero
  * already use.
+ *
+ * A live radio stream has no timeline: the back-15 button is gone
+ * (there is nowhere to go back to) and the trailing button stops the
+ * stream instead of skipping it.
  */
 @Composable
 private fun Transport(
@@ -649,19 +888,21 @@ private fun Transport(
         horizontalArrangement = Arrangement.spacedBy(52.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PressableIconButton(
-            label = "Back 15 seconds",
-            onClick = {
-                haptics.light()
-                store.player.skipBackward(by = 15.0)
-            },
-            modifier = Modifier.size(56.dp),
-        ) {
-            TransportGlyph(
-                kind = TransportGlyphKind.back15,
-                size = 27.dp,
-                color = Color.White,
-            )
+        if (!track.isRadio) {
+            PressableIconButton(
+                label = "Back 15 seconds",
+                onClick = {
+                    haptics.light()
+                    store.player.skipBackward(by = 15.0)
+                },
+                modifier = Modifier.size(56.dp),
+            ) {
+                TransportGlyph(
+                    kind = TransportGlyphKind.back15,
+                    size = 27.dp,
+                    color = Color.White,
+                )
+            }
         }
         Box(
             modifier = Modifier.size(width = 92.dp, height = 76.dp),
@@ -703,15 +944,19 @@ private fun Transport(
             }
         }
         PressableIconButton(
-            label = "Next track",
+            label = if (track.isRadio) "Stop radio" else "Next track",
             onClick = {
                 haptics.medium()
-                store.send(AmphoraStore.Intent.SkipToNext)
+                if (track.isRadio) {
+                    store.send(AmphoraStore.Intent.StopRadio)
+                } else {
+                    store.send(AmphoraStore.Intent.SkipToNext)
+                }
             },
             modifier = Modifier.size(56.dp),
         ) {
             TransportGlyph(
-                kind = TransportGlyphKind.next,
+                kind = if (track.isRadio) TransportGlyphKind.stop else TransportGlyphKind.next,
                 size = 27.dp,
                 color = Color.White,
             )

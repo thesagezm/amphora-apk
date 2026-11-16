@@ -14,17 +14,27 @@ before porting any view).
 
 ## Current Milestone
 
-**A7** — radio mode (RadioBrowser UI, favorites/recents/custom stations,
-ICY probe + live-lag scheduling). User directive 2026-11-17: "start from
-A7" (the keep-moving instruction AGENTS.md asks for). A6 landed
-code-complete and CI-green before it (A6.1–A6.2); A5 (A5.1–A5.6) and A4
-before that. The phone demo checklists (A4 + A5 + A6, below) are still
-owed. Unit plan: A7.1 discovery controller + data layer → A7.2 playback
-wiring → A7.3 RadioView UI → A7.4 ICY probe + identification → A7.5
-player radio surfaces + parity pass.
+**A7** — radio mode: **A7.1–A7.5 landed (milestone code-complete)**.
+User directive 2026-11-17: "start from A7". The full surface is in:
+RadioView (hero/recents/favorites/custom/discover/search/results +
+paging), custom-station form, playback (live streams through the same
+player, next = stop), favorites/recents persistence, the ICY probe with
+lag-scheduled announcements, identified-song artwork + lyrics, and the
+player radio surfaces (LIVE badge, identify status, stop glyph).
+Next: **A8** — Last.fm scrobbling + Settings + Diagnostics + themes +
+crash handler — after CI green here, or on the user's next keep-moving.
 
 ## Queue (pending, in order)
 
+- **A7 verification (user)**: Radio tab → Discover → Popular loads;
+  search finds stations; tap a station → audio starts, the row
+  highlights, the mini-player shows the station tile; LIVE badge
+  pulses; a metadata station flips the header to the announced song
+  ("on <station>"), pulls its cover and lyrics; the star favorites a
+  station (survives relaunch); recents fill with a Clear in the
+  header; long-press removes a recent; + adds a custom station
+  (name + stream URL) that plays and can be edited/deleted; stop
+  (player or mini-player) halts the stream.
 - **A6 verification (user)**: play a song → tap the quote button in
   the full player → synced lyrics scroll with playback, tap a line
   seeks; foreign song → auto/manual Translate ("Translated"/"Already
@@ -120,6 +130,30 @@ player radio surfaces + parity pass.
   `Amphora/UI/*` for every view's design).
 
 ## Log
+
+- 2026-11-17 — **A7.5 landed — the player's radio surfaces + the
+  milestone parity pass, A7 code-complete**: NowPlayingView (port of
+  the radio branches: the lyrics toolbar toggle guarded to
+  `!isRadioStream || identified`; the menu's radio branch — Identify
+  Song (Search glyph) guards the song-level items away, Sleep Timer
+  stays in both; the identified song takes the header — its title, its
+  artist in the accent, "on <station>" beneath, album hidden; the
+  scrubber hidden for radio; artwork = identified song's cover →
+  generated station tile (200px gate); PlayerControls: RadioIdentifyStatus
+  replaces the badge slot — LIVE badge (pulsing red dot, playerSurface
+  capsule, "Live radio stream" a11y) + per-state: tappable Identify
+  capsule with mini spinner / "No song announcements" / "Looking up
+  artwork…" / nothing; FeedbackBar hidden for radio; Transport: back-15
+  gone, stop glyph + "Stop radio" replaces next) + MiniPlayer (the
+  station tile artwork for radio, next → stop + "Stop radio") + the
+  parity checks walked against the iOS files (toggle/menu/header/
+  artwork/badges/transport/feedback/volume/up-next all match; skip-
+  limit badge stays Pandora-only; Up Next self-hides on the empty
+  radio queue). Known delta (documented, revisit in A9): the media
+  notification shows the favicon URI directly — iOS swaps in the
+  generated tile below 120px; wiring `radioTileBitmap` into MediaMetadata
+  artwork would cost main-thread bitmap work per radio start, the
+  wrong trade now. Local gate green: `:core:test` + `:app:assembleDebug`.
 
 - 2026-11-17 — **A7.4 landed — ICY identification**: `player/RadioMetadataProbe.kt`
   (port of RadioMetadataProbe.swift: its own connection with

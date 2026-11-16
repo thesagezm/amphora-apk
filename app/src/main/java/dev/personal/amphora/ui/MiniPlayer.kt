@@ -13,10 +13,8 @@
 //  - The AirPlay route picker + the "playing on <device>" caption are
 //    out of scope (AGENTS.md deprioritizes the output picker; system
 //    output switching first). The caption is always the artist.
-//  - The radio "next = stop" branch arrives with A7 (radio tracks don't
-//    exist yet, so `next` always skips).
 //  - SF Symbols map to Material glyphs (speaker = the radio tile's
-//    fallback stays in CachedArtwork).
+//    fallback stays in RadioStationArtwork).
 //
 
 package dev.personal.amphora.ui
@@ -58,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.personal.amphora.store.AmphoraStore
 import dev.personal.amphora.support.rememberHaptics
+import pandoracore.isRadio
 
 @Composable
 fun MiniPlayer(store: AmphoraStore, onOpen: () -> Unit) {
@@ -108,11 +107,25 @@ fun MiniPlayer(store: AmphoraStore, onOpen: () -> Unit) {
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CachedArtwork(
-                        urlString = current?.artworkUrl,
-                        cornerRadius = Theme.radiusS + 2.dp,
-                        modifier = Modifier.size(44.dp),
-                    )
+                    // A radio stream has no album art — it has a
+                    // favicon, which is usually a 16×16 icon or missing
+                    // entirely. The generated station tile covers both
+                    // cases.
+                    if (current?.isRadio == true) {
+                        RadioStationArtwork(
+                            stationName = current.title,
+                            faviconURL = current.artworkUrl,
+                            cornerRadius = Theme.radiusS + 2.dp,
+                            minimumArtworkPixels = 64,
+                            modifier = Modifier.size(44.dp),
+                        )
+                    } else {
+                        CachedArtwork(
+                            urlString = current?.artworkUrl,
+                            cornerRadius = Theme.radiusS + 2.dp,
+                            modifier = Modifier.size(44.dp),
+                        )
+                    }
                     Column {
                         Text(
                             text = current?.title.orEmpty(),
@@ -151,14 +164,24 @@ fun MiniPlayer(store: AmphoraStore, onOpen: () -> Unit) {
                 }
                 MiniTransportButton(
                     circled = false,
-                    label = "Next track",
+                    // A radio stream has no next track — the button
+                    // stops it instead.
+                    label = if (current?.isRadio == true) "Stop radio" else "Next track",
                     onClick = {
                         haptics.medium()
-                        store.send(AmphoraStore.Intent.SkipToNext)
+                        if (current?.isRadio == true) {
+                            store.send(AmphoraStore.Intent.StopRadio)
+                        } else {
+                            store.send(AmphoraStore.Intent.SkipToNext)
+                        }
                     },
                 ) {
                     TransportGlyph(
-                        kind = TransportGlyphKind.next,
+                        kind = if (current?.isRadio == true) {
+                            TransportGlyphKind.stop
+                        } else {
+                            TransportGlyphKind.next
+                        },
                         size = 17.dp,
                         color = labelColor(theme),
                     )
