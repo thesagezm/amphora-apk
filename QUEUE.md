@@ -121,6 +121,36 @@ player radio surfaces + parity pass.
 
 ## Log
 
+- 2026-11-17 — **A7.3 landed — the Radio tab** (`ui/RadioView.kt` +
+  `ui/RadioStationArtwork.kt` + `ui/RadioStationFormSheet.kt`, the
+  MainTabView Radio slot swapped in): RadioView (port of RadioView.swift:
+  large title + add button + the `.searchable` field bound to
+  `radio.searchText` (the controller owns the 400ms debounce; non-empty
+  swaps the root for results); home list = hero (radioRecents.first, up
+  to 240dp tile, "Now playing/Last played", 58dp accent play/pause with
+  the press-dip — the Home hero's radio copy) + My Stations (long-press
+  Edit/Delete — iOS contextMenu) + Recently Played (Clear in the
+  header, long-press Remove — iOS swipe action) + Favorites +
+  Discover (Popular/Countries/Tags with the 44dp accent tiles) +
+  `RadioResultsBody` (results/loading/error+Retry/empty states, shared
+  by the search root and the pushed lists; the "Show More" paging
+  footer — spinner/more-error+Retry/chevron-down button, deduped by
+  the controller) + the NavigationStack pushes become local pushed
+  state + BackHandler (Popular / Countries → country drill-in / Tags →
+  tag drill-in, `LaunchedEffect(mode)` = iOS `.onAppear`) +
+  `RadioStationRow` (favicon-or-tile 44dp, accent name when current,
+  caption, playing glyph, the nested 44dp star toggle — takes its own
+  taps) + form sheet (Name + Stream URL fields, URI keyboard, the
+  footnote copy, Cancel/Save with the http(s) `java.net.URI`
+  validation, edit prefill) + `RadioStationArtwork` (generated
+  initials-over-hue-gradient tile always underneath; the real favicon
+  wins when ≥ minimumArtworkPixels — Coil ORIGINAL-decode through the
+  shared loader, the ArtworkPaletteService idiom; + `radioTileBitmap`
+  for the notification artwork, wired in A7.5). Icon ports:
+  antenna→Radio (no Antennas glyph in the rounded set), chart→TrendingUp,
+  globe→Public, tag→Sell, star→Star/StarOutline. Local gate green:
+  `:core:test` + `:app:assembleDebug`.
+
 - 2026-11-17 — **A7.2 landed — radio playback wiring**: `PlaybackClient`
   grows `playLiveStream(track)` (one slot, no prefetch, duration 0 —
   the scrubber reads it as live; the A4 clear-fires-null contract kept,
