@@ -21,9 +21,6 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Queue (pending, in order)
 
-- **A5.3** — bookmarks + sleep-song: store surface
-  (refresh/add/delete + "Song bookmarked" confirmations) + the player
-  menu items Bookmark Song / Bookmark Artist / Hide This Song.
 - **A5.4** — history: app-side `HistoryStore` persistence + `history`
   state + record-on-track-changed observer (ads/radio excluded) +
   `rateHistoryTrack`/`removeHistoryTrackRating` + `ratingTrackTokens`.
@@ -108,6 +105,21 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Log
 
+- 2026-11-17 — **A5.3 landed — bookmarks + sleep-song + the player
+  menu items**: `AmphoraStore` grows `bookmarks`/`isLoadingBookmarks`
+  + intents SleepCurrentTrack / BookmarkCurrentSong /
+  BookmarkCurrentArtist / RefreshBookmarks / DeleteBookmark
+  (`sleepCurrentTrack` = user.sleepSong then the player's skip — iOS
+  drives the player directly there, the ad guard precedes it;
+  bookmark adds refresh the list + "Song/Artist bookmarked"
+  confirmation; `refreshBookmarks` is public for the Recents sheet's
+  on-open refresh in A5.5). NowPlayingView's actionsMenu grows the
+  iOS non-radio branch: Bookmark Song (Bookmark), Bookmark Artist
+  (PersonAdd ≈ person.crop.circle.badge.plus), Hide This Song
+  (HearingDisabled ≈ ear.slash), separated by dividers, haptics.light
+  per iOS. The radio branch (Identify Song instead of the song-level
+  items) arrives with A7 — documented in the header. Local gate
+  green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-17 — **A5.2 landed — sleep timer**: `AmphoraStore` grows
   `sleepTimer`/`sleepTimerLabel` (live label refreshed only when the
   visible minute changes — the loop wakes every ≤30 s, not every

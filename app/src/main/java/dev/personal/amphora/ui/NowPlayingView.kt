@@ -12,9 +12,9 @@
 //
 //  Arriving with their own units (kept out so nothing ships inert):
 //  - Lyrics toolbar button + panel: A6.
-//  - Radio surfaces (LIVE badge, identify status, stop): A7.
-//  - Bookmark Song / Bookmark Artist / Hide This Song menu items: A5.3
-//    (Sleep Timer… landed with A5.2; Tune Station… landed in A3.5).
+//  - Radio surfaces (LIVE badge, identify status, Identify Song menu
+//    item, stop): A7 — the menu's radio branch guards the song-level
+//    items away there; until A7 the menu always shows the song branch.
 //  - The AirPlay route picker + route indicator: out of scope
 //    (AGENTS.md deprioritizes the output picker).
 //
@@ -61,12 +61,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.HearingDisabled
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -183,6 +187,41 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                             onClick = {
                                 isShowingActions = false
                                 isShowingTuning = true
+                            },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Bookmark Song", color = labelColor(theme)) },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = labelColor(theme))
+                            },
+                            onClick = {
+                                isShowingActions = false
+                                haptics.light()
+                                store.send(AmphoraStore.Intent.BookmarkCurrentSong)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Bookmark Artist", color = labelColor(theme)) },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.PersonAdd, contentDescription = null, tint = labelColor(theme))
+                            },
+                            onClick = {
+                                isShowingActions = false
+                                haptics.light()
+                                store.send(AmphoraStore.Intent.BookmarkCurrentArtist)
+                            },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Hide This Song", color = labelColor(theme)) },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.HearingDisabled, contentDescription = null, tint = labelColor(theme))
+                            },
+                            onClick = {
+                                isShowingActions = false
+                                haptics.light()
+                                store.send(AmphoraStore.Intent.SleepCurrentTrack)
                             },
                         )
                     }

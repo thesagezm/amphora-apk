@@ -36,6 +36,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import pandoracore.Bookmark
 import pandoracore.FeedbackRating
 import pandoracore.LastFmClient
 import pandoracore.LegacyPandoraClient
@@ -241,6 +242,14 @@ class AmphoraStore {
      *  replaced whenever the timer changes. */
     private var sleepTimerJob: Job? = null
 
+    // MARK: Observable state (bookmarks)
+
+    /** The user's bookmarks (`user.getBookmarks`), songs first. */
+    var bookmarks: List<Bookmark> by mutableStateOf(emptyList())
+        private set
+    var isLoadingBookmarks: Boolean by mutableStateOf(false)
+        private set
+
     // MARK: Intents
 
     /**
@@ -283,6 +292,11 @@ class AmphoraStore {
             is Intent.RemoveCurrentRating -> launchIntent { removeCurrentRating() }
             is Intent.SetSleepTimer -> applySleepTimer(intent.timer)
             is Intent.CancelSleepTimer -> applySleepTimer(SleepTimer.off)
+            is Intent.SleepCurrentTrack -> launchIntent { sleepCurrentTrack() }
+            is Intent.BookmarkCurrentSong -> launchIntent { bookmarkCurrentSong() }
+            is Intent.BookmarkCurrentArtist -> launchIntent { bookmarkCurrentArtist() }
+            is Intent.RefreshBookmarks -> launchIntent { refreshBookmarks() }
+            is Intent.DeleteBookmark -> launchIntent { deleteBookmark(intent.bookmark) }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -311,6 +325,11 @@ class AmphoraStore {
         data object RemoveCurrentRating : Intent()
         data class SetSleepTimer(val timer: SleepTimer) : Intent()
         data object CancelSleepTimer : Intent()
+        data object SleepCurrentTrack : Intent()
+        data object BookmarkCurrentSong : Intent()
+        data object BookmarkCurrentArtist : Intent()
+        data object RefreshBookmarks : Intent()
+        data class DeleteBookmark(val bookmark: Bookmark) : Intent()
         data object DismissError : Intent()
     }
 
@@ -1032,6 +1051,84 @@ class AmphoraStore {
         updatePreferences { it.copy(sleepTimer = SleepTimer.off) }
         sleepTimerJob?.cancel()
         sleepTimerJob = null
+    }
+
+    // MARK: Bookmarks & sleep-song (the port of AppStore's bookmark
+    // section)
+
+    /** Hides the current track for a few hours (`user.sleepSong`,
+     *  pithos `Song.set_tired`) and moves on to the next one — the
+     *  player menu's "Hide This Song". */
+    private suspend fun sleepCurrentTrack() {
+        val track = player.currentTrack.value ?: return
+        // Ads are not songs. (The radio guard arrives with A7.)
+        if (track.isAdvertisement) return
+        lastErrorMessage = null
+        try {
+            session.sleepSong(trackToken = track.trackToken)
+            // iOS drives the player directly here (the ad guard above
+            // already cleared the only case the store's skip refuser
+            // covers).
+            player.skipToNext()
+        } catch (error: Exception) {
+            record(error)
+        }
+    }
+
+    /** Bookmark the current song (`bookmark.addSongBookmark`). */
+    private suspend fun bookmarkCurrentSong() {
+        val track = player.currentTrack.value ?: return
+        if (track.isAdvertisement) return
+        lastErrorMessage = null
+        try {
+            session.addSongBookmark(trackToken = track.trackToken)
+            refreshBookmarks()
+            showConfirmation("Song bookmarked")
+        } catch (error: Exception) {
+            record(error)
+        }
+    }
+
+    /** Bookmark the current artist (`bookmark.addArtistBookmark`). */
+    private suspend fun bookmarkCurrentArtist() {
+        val track = player.currentTrack.value ?: return
+        if (track.isAdvertisement) return
+        lastErrorMessage = null
+        try {
+            session.addArtistBookmark(trackToken = track.trackToken)
+            refreshBookmarks()
+            showConfirmation("Artist bookmarked")
+        } catch (error: Exception) {
+            record(error)
+        }
+    }
+
+    /** Loads the user's bookmarks. Public: the Recents sheet refreshes
+     *  on open (iOS's `BookmarksList` `.task`). */
+    suspend fun refreshBookmarks() {
+        if (isLoadingBookmarks) return
+        isLoadingBookmarks = true
+        try {
+            bookmarks = session.getBookmarks()
+        } catch (error: Exception) {
+            record(error)
+        } finally {
+            isLoadingBookmarks = false
+        }
+    }
+
+    /** Removes a bookmark (song or artist). */
+    private suspend fun deleteBookmark(bookmark: Bookmark) {
+        lastErrorMessage = null
+        try {
+            when (bookmark.kind) {
+                Bookmark.Kind.song -> session.deleteSongBookmark(bookmark.bookmarkToken)
+                Bookmark.Kind.artist -> session.deleteArtistBookmark(bookmark.bookmarkToken)
+            }
+            bookmarks = bookmarks.filterNot { it.bookmarkToken == bookmark.bookmarkToken }
+        } catch (error: Exception) {
+            record(error)
+        }
     }
 
     // MARK: Skip limit
