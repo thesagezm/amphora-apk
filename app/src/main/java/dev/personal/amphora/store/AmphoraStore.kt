@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.personal.amphora.AmphoraContextProvider
+import dev.personal.amphora.persistence.Preferences
+import dev.personal.amphora.persistence.PreferencesStore
 import dev.personal.amphora.pandora.CookieCsrfProvider
 import dev.personal.amphora.pandora.KeystoreSessionStore
 import dev.personal.amphora.pandora.OkHttpGetTransport
@@ -81,6 +83,55 @@ class AmphoraStore {
 
     private var didStartRestore = false
 
+    // MARK: Preferences (non-secret; one JSON file in filesDir)
+
+    private val preferencesStore = PreferencesStore()
+
+    var preferences: Preferences by mutableStateOf(Preferences())
+        private set
+
+    /** Persists a preferences change — mutate-and-save in one step,
+     *  the port of the Swift `preferences.x = y; preferencesStore.save(preferences)`. */
+    private fun updatePreferences(transform: (Preferences) -> Preferences) {
+        preferences = transform(preferences)
+        preferencesStore.save(preferences)
+    }
+
+    init {
+        // Non-secret preferences load eagerly; the Keystore session
+        // restores via the restore intent (zero network).
+        preferences = preferencesStore.load()
+    }
+
+    // MARK: Observable state (stations surface)
+
+    var stations: List<pandoracore.Station> by mutableStateOf(emptyList())
+        private set
+    var isLoadingStations: Boolean by mutableStateOf(false)
+        private set
+    var isMutatingStations: Boolean by mutableStateOf(false)
+        private set
+    var currentStation: pandoracore.Station? by mutableStateOf(null)
+        private set
+    /** The station that hit Pandora's daily skip limit (A4 sets this;
+     *  the Home rows render it). */
+    var skipLimitStationId: String? by mutableStateOf(null)
+        private set
+    /** Whether Pandora hides explicit tracks for this account
+     *  (`user.getSettings`). Pandora's explicit filter is an **account**
+     *  switch, not a per-track flag, so Home shows one account-level
+     *  badge. */
+    var isExplicitContentFilterEnabled: Boolean by mutableStateOf(false)
+        private set
+
+    /** The hero of the Home tab: the last-played station, if it still
+     *  exists in the list. Hidden until something has played. */
+    val featuredStation: pandoracore.Station?
+        get() {
+            val id = preferences.lastStationId ?: return null
+            return stations.firstOrNull { it.id == id }
+        }
+
     // MARK: Intents
 
     /**
@@ -93,12 +144,32 @@ class AmphoraStore {
         when (intent) {
             is Intent.RestoreSession -> restoreSession()
             is Intent.Login -> login(intent.username, intent.password)
+            is Intent.RefreshStations -> launchIntent { refreshStations() }
+            is Intent.RenameStation ->
+                launchIntent { renameStation(intent.station, intent.newName) }
+            is Intent.DeleteStation -> launchIntent { deleteStation(intent.station) }
+            is Intent.MoveStation -> moveStation(from = intent.from, to = intent.to)
+            is Intent.DismissError -> lastErrorMessage = null
         }
     }
 
     sealed class Intent {
         data object RestoreSession : Intent()
         data class Login(val username: String, val password: String) : Intent()
+        data object RefreshStations : Intent()
+        data class RenameStation(val station: pandoracore.Station, val newName: String) : Intent()
+        data class DeleteStation(val station: pandoracore.Station) : Intent()
+        data class MoveStation(val from: Int, val to: Int) : Intent()
+        data object DismissError : Intent()
+    }
+
+    /** One scope for intent coroutines — main dispatcher, since state
+     *  updates land on main; the core's suspend calls dispatch their
+     *  own network work off it. */
+    private val intentScope = CoroutineScope(Dispatchers.Main)
+
+    private fun launchIntent(block: suspend () -> Unit) {
+        intentScope.launch { block() }
     }
 
     private fun restoreSession() {
@@ -112,6 +183,8 @@ class AmphoraStore {
                 isSubscriber = session.isSubscriber
                 currentSession = session.session
                 authPhase = AuthPhase.signedIn
+                refreshUserSettings()
+                refreshStations()
             } else {
                 authPhase = AuthPhase.signedOut
             }
@@ -133,11 +206,144 @@ class AmphoraStore {
                 currentSession = session.login(username = user, password = password)
                 isSubscriber = session.isSubscriber
                 authPhase = AuthPhase.signedIn
+                refreshUserSettings()
+                refreshStations()
             } catch (error: Exception) {
                 authPhase = AuthPhase.signedOut
                 record(error)
             }
         }
+    }
+
+    // MARK: User settings
+
+    /**
+     * Reads the account-level settings (`user.getSettings`). Best-effort:
+     * a failure here never blocks the app, it only means the
+     * explicit-content badge stays off.
+     */
+    private suspend fun refreshUserSettings() {
+        try {
+            val settings = session.getUserSettings()
+            isExplicitContentFilterEnabled = settings.isExplicitContentFilterEnabled
+            AppLog.info(
+                "explicit content filter: " +
+                    (if (settings.isExplicitContentFilterEnabled) "on" else "off"),
+                AppLog.Category.network,
+            )
+        } catch (error: Exception) {
+            AppLog.info("user settings unavailable: $error", AppLog.Category.network)
+        }
+    }
+
+    // MARK: Stations
+
+    /**
+     * Fetches `user.getStationList`. Fire-and-forget via the intent;
+     * also awaited directly for pull-to-refresh. A guard keeps
+     * concurrent calls from stacking.
+     */
+    suspend fun refreshStations() {
+        if (isLoadingStations) return
+        lastErrorMessage = null
+        isLoadingStations = true
+        try {
+            val list = session.getStationList()
+            stations = displayOrder(list.stations)
+            AppLog.info("station list loaded: ${stations.size} stations")
+        } catch (error: Exception) {
+            // Keep any already-loaded list; surface the error when empty
+            // (error/empty-state polish lands in M5).
+            if (stations.isEmpty()) {
+                record(error)
+            }
+            AppLog.error("station list failed: $error")
+        } finally {
+            isLoadingStations = false
+        }
+    }
+
+    /** Rename via `SessionManager` (shared stations transform first on
+     *  the core side), then reload so sort order reflects the new name. */
+    private suspend fun renameStation(station: pandoracore.Station, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || isMutatingStations) {
+            if (trimmed.isEmpty()) {
+                lastErrorMessage = "Enter a station name."
+            }
+            return
+        }
+        lastErrorMessage = null
+        isMutatingStations = true
+        try {
+            session.renameStation(station, trimmed)
+            refreshStations()
+        } catch (error: Exception) {
+            record(error)
+        } finally {
+            isMutatingStations = false
+        }
+    }
+
+    private suspend fun deleteStation(station: pandoracore.Station) {
+        if (isMutatingStations) return
+        lastErrorMessage = null
+        isMutatingStations = true
+        try {
+            session.deleteStation(station)
+            stations = stations.filterNot { it.id == station.id }
+        } catch (error: Exception) {
+            record(error)
+        } finally {
+            isMutatingStations = false
+        }
+    }
+
+    /** `true` when the station hit Pandora's daily skip limit. */
+    fun isSkipLimited(station: pandoracore.Station): Boolean =
+        skipLimitStationId == station.id
+
+    /**
+     * The list as the user sees it: QuickMix first, then the stored
+     * order, then the remaining stations by name (case-insensitive, id
+     * as the tiebreak so the order never shuffles between reloads).
+     *
+     * Port delta: Swift sorts with `localizedCaseInsensitiveCompare`;
+     * the JVM port lowercases for a stable, locale-independent order —
+     * the id tiebreak preserves the never-shuffle guarantee either way.
+     */
+    private fun displayOrder(stations: List<pandoracore.Station>): List<pandoracore.Station> {
+        val ordered = preferences.stationOrder.apply(stations)
+        val custom = preferences.stationOrder.orderedIds.toSet()
+        return ordered.sortedWith { lhs, rhs ->
+            when {
+                lhs.isQuickMix != rhs.isQuickMix -> if (lhs.isQuickMix) -1 else 1
+                custom.contains(lhs.id) != custom.contains(rhs.id) ->
+                    if (custom.contains(lhs.id)) -1 else 1
+                // Both are user-ordered — keep the stored sequence.
+                custom.contains(lhs.id) && custom.contains(rhs.id) -> {
+                    val lhsIndex = preferences.stationOrder.orderedIds.indexOf(lhs.id)
+                    val rhsIndex = preferences.stationOrder.orderedIds.indexOf(rhs.id)
+                    lhsIndex.compareTo(rhsIndex)
+                }
+                else -> {
+                    val byName = lhs.name.lowercase().compareTo(rhs.name.lowercase())
+                    if (byName != 0) byName else lhs.id.compareTo(rhs.id)
+                }
+            }
+        }
+    }
+
+    /** Moves a station to a new position in the list and persists the
+     *  new order. */
+    private fun moveStation(from: Int, to: Int) {
+        if (from !in stations.indices) return
+        val ids = stations.map { it.id }.toMutableList()
+        val moved = ids.removeAt(from)
+        val target = to.coerceIn(0, ids.size)
+        ids.add(target, moved)
+        updatePreferences { it.copy(stationOrder = it.stationOrder.setOrder(ids)) }
+        stations = preferences.stationOrder.apply(stations)
     }
 
     // MARK: Error copy (port of `AppStore.userMessage(for:)` / `record`)

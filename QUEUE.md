@@ -19,12 +19,20 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3 first steps**: `MainTabView` + `StationsView` ports (iOS
-  `Amphora/UI/MainTabView.swift` + `StationsView.swift` + sheets),
-  store gains `stations` StateFlow + refresh/search/create/rename/
-  delete intents, `PreferencesStore` port (JSON file in `filesDir`),
-  genre stations + AddStation flow. Replace `RootView`'s
-  `PlaceholderHome`.
+- **A3.2 (next)**: `MainTabView` shell (Home/Radio/Settings tabs,
+  mini-player slot seam) + `StationsView` port — loading/empty/error
+  states, station rows with badges, toolbar (recents/add/reorder) —
+  replaces `RootView`'s `PlaceholderHome`. Read
+  `Amphora/UI/MainTabView.swift` + `StationsView.swift` first.
+- **A3.3**: hero + browse row + pull-to-refresh + reorder UI
+  (`moveStation` store intent already landed in A3.1).
+- **A3.4**: `AddStationView` + `BrowseStationsSheet` + genre stations
+  (store: create/createGenre/loadGenres intents).
+- **A3.5**: rename/delete alerts + `TuneStationSheet` + station search
+  (store intents for search landed with A3.4's MusicSearch plumbing —
+  check `SessionManager.search`).
+- **A3 note**: `.playStation` intent is A4 wiring — station taps stay
+  inert in A3 (playback milestone); documented, not a hidden stub.
 - **A2 verification owed before A4** (user-perceived): Waydroid smoke
   test — launch → login screen → wrong password shows the typed error
   copy → real login lands signed-in. Then user phone install via the
@@ -63,6 +71,19 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **user directive recorded**: device testing via Waydroid
+  ONLY (no emulator), no subagents (standing).
+- 2026-11-16 — **A3.1 landed**: `persistence/PreferencesStore.kt`
+  (kotlinx-serialization JSON in `filesDir/preferences.json`, atomic
+  best-effort save, fail-closed load; fields mirror the Swift file so
+  names survive) + `AmphoraStore` stations state layer: `stations`/
+  `isLoadingStations`/`isMutatingStations`/`currentStation`/
+  `skipLimitStationId`/`isExplicitContentFilterEnabled`,
+  `featuredStation`, `preferences` StateFlow, intents (refresh/rename/
+  delete/move/dismissError), `displayOrder` port (QuickMix first →
+  stored order → A–Z, id tiebreak), post-sign-in
+  `refreshUserSettings` → `refreshStations` on both restore and login
+  paths. Local gate green: 372/372 + APK.
 - 2026-11-15 — session 1: plan approved (native Kotlin + Compose +
   Media3, full parity, repo `~/code/Amphora-APK`). AGENTS.md + QUEUE.md
   created (commit `6f92f4a`). User additions: success = green GitHub
