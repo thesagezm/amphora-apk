@@ -14,16 +14,26 @@ before porting any view).
 
 ## Current Milestone
 
-**A2** — auth (A1 core protocol port code-complete 2026-11-16: all 33
-PandoraCore sources + 372 fixture tests green in `:core`; the delta to
-the iOS 379 is seven tests whose Swift files use platform-only
-assertions or were subsumed — see the per-unit commit notes).
+**A3** — stations (A2 auth code-complete 2026-11-16, local gate green;
+CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A2** — auth: Keystore session store, OkHttp transport adapters
-  (HttpTransport + GET + modes + cookie-CSRF), auto-login, login screen
-  (iOS `LoginView` look).
+- **A3 first steps**: `MainTabView` + `StationsView` ports (iOS
+  `Amphora/UI/MainTabView.swift` + `StationsView.swift` + sheets),
+  store gains `stations` StateFlow + refresh/search/create/rename/
+  delete intents, `PreferencesStore` port (JSON file in `filesDir`),
+  genre stations + AddStation flow. Replace `RootView`'s
+  `PlaceholderHome`.
+- **A2 verification owed before A4** (user-perceived): emulator smoke
+  test (android-36 google_apis image installed) — launch → login
+  screen → wrong password shows the typed error copy → real login
+  lands signed-in. Then user phone install via the CI APK artifact.
+- **A3** — stations: fetch/list/reorder/create/rename/delete/search/
+  genres, preferences store, mini-tab scaffold.
+- **A4** — playback: Media3 ExoPlayer + `MediaSessionService`, media
+  notification, prefetch, mini-player + `NowPlayingView` (the "it
+  works" milestone).
 - **A3** — stations UI (iOS `MainTabView` + `StationsView` look).
 - **A4** — playback: ExoPlayer + `MediaSessionService`, media
   notification, prefetch, mini-player + `NowPlayingView`.
@@ -73,6 +83,30 @@ assertions or were subsumed — see the per-unit commit notes).
   alignment contract, romanization gates, fallback chain) · LastFm
   (MD5 signing, scrobble policy) · RadioBrowser/RadioStreamMetadata
   (ICY state machine, mirror rotation). **372/372 green in `:core`.**
+- 2026-11-16 — **A2 landed (auth)**: `ui/Theme.kt` (the full
+  Theme.swift token port — 6 appearances × 5 accents, radii, gradients,
+  press styles; `ThemeController` grows its persistence in A8);
+  `pandora/OkHttpTransports.kt` (one shared OkHttpClient + cookie jar;
+  Pandora POST/GET/modes/radio/Last.fm adapters with the URLError
+  reason classification ported: timeout/unreachable/network failure);
+  `pandora/CookieCsrfProvider.kt` (the app-side half of the
+  CookieCSRFProvider split); `pandora/KeystoreSessionStore.kt`
+  (AES-GCM in AndroidKeyStore, record sealed in
+  `filesDir/session-session.seal`); `store/AmphoraStore.kt` (auth
+  phase StateFlow, login/restore intents, the full `userMessage(for:)`
+  error-copy port + session-dead return-to-sign-in);
+  `support/AppLog.kt` (logcat + ring buffer; file mirror + crash tail
+  in A8); `ui/LoginView.kt` + `ui/RootView.kt` + `MainActivity`
+  rewired (restore on launch, phase switch). Local gate green:
+  372/372 `:core:test` + `:app:assembleDebug`.
+- **HANDOVER (2026-11-16, end of session 1)**: A0–A2 code-complete.
+  Next agent starts A3 (stations UI) — read AGENTS.md, then QUEUE.md,
+  then the iOS `MainTabView.swift`/`StationsView.swift` before writing
+  any Composable. No subagents. Commit every green unit. CI green =
+  the verdict; the emulator smoke test listed above is owed before
+  A4's "it works" claim. `PlaceholderHome` in RootView is the only
+  user-reachable placeholder (explicitly an A3 stub — replace it
+  first).
 - **Known port deltas** (each documented in its file header):
   URLError classification + CookieCSRFProvider (URLSession cookie jar)
   move to the app-side OkHttp adapter (A2); the seven-test gap vs the

@@ -2,10 +2,10 @@
 //  MainActivity.kt
 //  app
 //
-//  A0 skeleton placeholder. The iOS-matching theme, RootView and the full
-//  UI port (LoginView, MainTabView, …) replace this body in A2–A4; the
-//  dark background color here comes from the iOS icon palette so the
-//  launch flash already looks right.
+//  Port of AmphoraApp + RootView wiring: the process installs its
+//  context, the store is created once (app lifetime), and RootView
+//  switches on the auth phase. The crash handler installs with
+//  CrashReporter in A8 (iOS does it in AmphoraApp.init).
 //
 
 package dev.personal.amphora
@@ -14,58 +14,30 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.remember
+import dev.personal.amphora.store.AmphoraStore
+import dev.personal.amphora.support.AppLog
+import dev.personal.amphora.ui.RootView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AmphoraContextProvider.install(this)
         enableEdgeToEdge()
+        val version = "0.1.0"
+        AppLog.info("Amphora launched, app $version build 1")
         setContent {
-            AmphoraPlaceholderTheme {
-                PlaceholderScreen()
+            // The app's own surfaces carry the theme tokens; the system
+            // scheme follows them via the controller (full theming port
+            // completes in A8).
+            MaterialTheme(
+                colorScheme = darkColorScheme(),
+            ) {
+                val store = remember { AmphoraStore() }
+                RootView(store)
             }
         }
-    }
-}
-
-private val AmphoraDeepViolet = Color(0xFF0C081A)
-
-@Composable
-private fun AmphoraPlaceholderTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            background = AmphoraDeepViolet,
-            surface = AmphoraDeepViolet,
-        ),
-        content = content,
-    )
-}
-
-@Composable
-private fun PlaceholderScreen() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmphoraDeepViolet),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "Amphora",
-            color = Color(0xFFFCE294),
-            fontSize = 28.sp,
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.headlineMedium,
-        )
     }
 }
