@@ -21,9 +21,6 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Queue (pending, in order)
 
-- **A5.5** — `RecentsView` (segmented pill: history rows with rating
-  controls + relative time, bookmarks list with delete) + the Home
-  toolbar clock button + sheet host in StationsView.
 - **A5.6** — skip-limit UX parity check + A5 polish.
 - **A4 verification (user)**: install the CI APK artifact (or
   Waydroid once unblocked) and run the demo checklist — launch →
@@ -102,6 +99,20 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Log
 
+- 2026-11-17 — **A5.5 landed — RecentsView + the Home toolbar
+  button**: `ui/RecentsView.kt` (port of RecentsView.swift: the soft
+  capsule segment picker — Recents/Bookmarks, 250ms fill lift; the
+  history half — empty state "Nothing played yet", rows with 44dp
+  artwork, title/artist, the two stacked rating glyph buttons (30×24,
+  accent when active, tap toggles off, disabled while that token's
+  rating is in flight or when the entry's station is gone — opacity
+  0.4), relative time via DateUtils (the `.relative` style port);
+  the bookmarks half — loading/empty states, Songs/Artists sections,
+  rows with kind-aware fallback glyphs (MusicNote/Mic) + destructive
+  delete, refresh-on-open (`refreshBookmarks` from LaunchedEffect =
+  iOS's `.task`)) + StationsView grows the toolbar clock button (iOS
+  order: recents, add, reorder) + the sheet host. Local gate green:
+  `:core:test` + `:app:assembleDebug`.
 - 2026-11-17 — **A5.4 landed — history**: `persistence/HistoryStore.kt`
   (JSON file in filesDir, fail-closed load, atomic best-effort save —
   the PreferencesStore pattern; the core `PlayHistory` JSON round-trip

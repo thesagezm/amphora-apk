@@ -10,7 +10,7 @@
 //  Arriving with their own units (kept out so nothing ships inert):
 //  - browse row + Add Station flow: A3.4
 //  - the "Tune Station…" context item + TuneStationSheet: A3.5
-//  - recents toolbar button: A5
+//  - recents toolbar button + RecentsView sheet: A5.5
 //
 //  A4.3 wired the play surface: row taps + the hero play button send
 //  `.playStation` (the store turns a tap on the playing station into a
@@ -64,6 +64,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
@@ -127,6 +128,7 @@ fun StationsView(store: AmphoraStore) {
     var isEditingOrder by remember { mutableStateOf(false) }
     var isAddingStation by remember { mutableStateOf(false) }
     var isBrowsingStations by remember { mutableStateOf(false) }
+    var isShowingRecents by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -135,7 +137,7 @@ fun StationsView(store: AmphoraStore) {
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // iOS: `.navigationTitle("Home")` + trailing toolbar items
-            // (recents joins in A5, add in A3.4).
+            // (recents clock, add plus, reorder arrows — the iOS order).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -149,6 +151,20 @@ fun StationsView(store: AmphoraStore) {
                     color = labelColor(theme),
                     modifier = Modifier.weight(1f),
                 )
+                // Recents + bookmarks lost their tab (user request
+                // 2026-11-07); they ride here as a sheet instead.
+                IconButton(
+                    onClick = { isShowingRecents = true },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Recents and bookmarks"
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Schedule,
+                        contentDescription = null,
+                        tint = theme.accent,
+                    )
+                }
                 IconButton(
                     onClick = { isAddingStation = true },
                     modifier = Modifier.semantics { contentDescription = "Add station" },
@@ -244,6 +260,15 @@ fun StationsView(store: AmphoraStore) {
             containerColor = theme.background,
         ) {
             BrowseStationsSheet(store = store, onDismiss = { isBrowsingStations = false })
+        }
+    }
+    if (isShowingRecents) {
+        ModalBottomSheet(
+            onDismissRequest = { isShowingRecents = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = theme.background,
+        ) {
+            RecentsView(store = store, onDismiss = { isShowingRecents = false })
         }
     }
     tuneTarget?.let { station ->
