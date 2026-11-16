@@ -21,9 +21,6 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Queue (pending, in order)
 
-- **A5.4** — history: app-side `HistoryStore` persistence + `history`
-  state + record-on-track-changed observer (ads/radio excluded) +
-  `rateHistoryTrack`/`removeHistoryTrackRating` + `ratingTrackTokens`.
 - **A5.5** — `RecentsView` (segmented pill: history rows with rating
   controls + relative time, bookmarks list with delete) + the Home
   toolbar clock button + sheet host in StationsView.
@@ -105,6 +102,21 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Log
 
+- 2026-11-17 — **A5.4 landed — history**: `persistence/HistoryStore.kt`
+  (JSON file in filesDir, fail-closed load, atomic best-effort save —
+  the PreferencesStore pattern; the core `PlayHistory` JSON round-trip
+  is already fixture-tested) + `AmphoraStore` gains `history` +
+  `ratingTrackTokens` + intents RateHistoryTrack/RemoveHistoryTrackRating
+  (remove maps to `.none`, exactly iOS's dispatch). The onTrackChanged
+  observer records the play (ads excluded; the radio guard lands with
+  A7) right after the rating reset, iOS order. Port delta: Swift's
+  mutating struct methods re-trigger `@Observable`; the Kotlin
+  `PlayHistory` mutates in place, so each call site does
+  `history = history.copy().also { it.record/setRating(...) }` before
+  saving — swap-in-a-copy so Compose sees the change. History is
+  device data: it survives sign-out and relaunch (loaded in init; iOS
+  keeps it on sign-out too). Local gate green: `:core:test` +
+  `:app:assembleDebug`.
 - 2026-11-17 — **A5.3 landed — bookmarks + sleep-song + the player
   menu items**: `AmphoraStore` grows `bookmarks`/`isLoadingBookmarks`
   + intents SleepCurrentTrack / BookmarkCurrentSong /

@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.personal.amphora.AmphoraContextProvider
+import dev.personal.amphora.persistence.HistoryStore
 import dev.personal.amphora.persistence.Preferences
 import dev.personal.amphora.persistence.PreferencesStore
 import dev.personal.amphora.pandora.CookieCsrfProvider
@@ -44,6 +45,7 @@ import pandoracore.PandoraAPIError
 import pandoracore.PandoraMalformedResponseError
 import pandoracore.PandoraTransportError
 import pandoracore.PlaylistError
+import pandoracore.PlayHistory
 import pandoracore.RadioBrowserClient
 import pandoracore.SessionManager
 import pandoracore.SessionManagerError
@@ -250,6 +252,23 @@ class AmphoraStore {
     var isLoadingBookmarks: Boolean by mutableStateOf(false)
         private set
 
+    // MARK: Observable state (history)
+
+    /** Local playback history ("recently played"), newest first.
+     *  `PlayHistory` mutates in place (the Swift struct mutated too),
+     *  so every mutation swaps in a copy to make Compose see it — see
+     *  the record/rating call sites. */
+    var history: PlayHistory by mutableStateOf(PlayHistory())
+        private set
+
+    /** Track tokens with a rating request in flight (from the Recents
+     *  list) — the UI disables those rows' buttons while it runs. */
+    var ratingTrackTokens: Set<String> by mutableStateOf(emptySet())
+        private set
+
+    /** Disk persistence for the history (JSON file in filesDir). */
+    private val historyStore = HistoryStore()
+
     // MARK: Intents
 
     /**
@@ -297,6 +316,14 @@ class AmphoraStore {
             is Intent.BookmarkCurrentArtist -> launchIntent { bookmarkCurrentArtist() }
             is Intent.RefreshBookmarks -> launchIntent { refreshBookmarks() }
             is Intent.DeleteBookmark -> launchIntent { deleteBookmark(intent.bookmark) }
+            is Intent.RateHistoryTrack ->
+                launchIntent {
+                    rateHistoryTrack(intent.rating, intent.entry, intent.station)
+                }
+            is Intent.RemoveHistoryTrackRating ->
+                launchIntent {
+                    rateHistoryTrack(FeedbackRating.none, intent.entry, intent.station)
+                }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -330,6 +357,15 @@ class AmphoraStore {
         data object BookmarkCurrentArtist : Intent()
         data object RefreshBookmarks : Intent()
         data class DeleteBookmark(val bookmark: Bookmark) : Intent()
+        data class RateHistoryTrack(
+            val rating: FeedbackRating,
+            val entry: PlayHistory.Entry,
+            val station: pandoracore.Station,
+        ) : Intent()
+        data class RemoveHistoryTrackRating(
+            val entry: PlayHistory.Entry,
+            val station: pandoracore.Station,
+        ) : Intent()
         data object DismissError : Intent()
     }
 
@@ -346,6 +382,9 @@ class AmphoraStore {
         // Non-secret preferences load eagerly; the Keystore session
         // restores via the restore intent (zero network).
         preferences = preferencesStore.load()
+        // The play history is device data — it survives sign-out and
+        // relaunch (iOS keeps it on sign-out too).
+        history = historyStore.load()
         // The playback volume survives a relaunch. `null` (a file written
         // before the key existed) means full volume.
         player.setVolume(preferences.playbackVolume ?: 1f)
@@ -381,6 +420,17 @@ class AmphoraStore {
             // The rating comes from the playlist entry (`songRating`).
             currentFeedbackId = null
             currentRating = feedbackRatingFor(track?.rating)
+            // Record the play in the local history (ads are not songs,
+            // and neither is a live radio stream — the radio guard
+            // arrives with A7). The station token rides along so the
+            // Recents list can rate the track later — the rating
+            // belongs to that station.
+            if (track != null && !track.isAdvertisement) {
+                history = history.copy().also {
+                    it.record(track, currentStation?.token)
+                }
+                historyStore.save(history)
+            }
             prepareAdIfNeeded(track)
             // An "end of track" sleep timer stops playback here — the
             // moment the next track starts (iOS fires it in the same
@@ -1128,6 +1178,48 @@ class AmphoraStore {
             bookmarks = bookmarks.filterNot { it.bookmarkToken == bookmark.bookmarkToken }
         } catch (error: Exception) {
             record(error)
+        }
+    }
+
+    // MARK: History rating (rate a song that has already played)
+
+    /**
+     * Rates a song from the Recents list ("pithos am able to like a
+     * song even after it has already played").
+     *
+     * The rating belongs to the *song*, not to the play — it goes
+     * through `SessionManager.rateTrack` (pithos `Song.rate` verbatim:
+     * transform a shared station first, replace an existing rating by
+     * its feedback id, and obtain an id when removing a rating whose
+     * id is unknown by re-rating with the opposite rating first).
+     *
+     * The rating is written back into the history so the row shows it.
+     */
+    private suspend fun rateHistoryTrack(
+        rating: FeedbackRating,
+        entry: PlayHistory.Entry,
+        station: pandoracore.Station,
+    ) {
+        lastErrorMessage = null
+        ratingTrackTokens = ratingTrackTokens + entry.trackToken
+        try {
+            val result = session.rateTrack(
+                trackToken = entry.trackToken,
+                station = station,
+                rating = rating,
+            )
+            history = history.copy().also {
+                it.setRating(result.rating, entry.trackToken)
+            }
+            historyStore.save(history)
+            AppLog.info(
+                "history track rated: \"${entry.title}\" → ${result.rating.name}",
+                AppLog.Category.playback,
+            )
+        } catch (error: Exception) {
+            record(error)
+        } finally {
+            ratingTrackTokens = ratingTrackTokens - entry.trackToken
         }
     }
 
