@@ -35,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import pandoracore.FeedbackRating
 import pandoracore.LastFmClient
 import pandoracore.LegacyPandoraClient
 import pandoracore.PandoraAPIError
@@ -207,6 +208,21 @@ class AmphoraStore {
 
     private var searchJob: kotlinx.coroutines.Job? = null
 
+    // MARK: Observable state (feedback)
+
+    /** The rating on the current track. The FeedbackBar renders it and
+     *  toggles it off by sending `RemoveCurrentRating` (pithos'
+     *  `Song.rate` love/ban toggle). */
+    var currentRating: FeedbackRating by mutableStateOf(FeedbackRating.none)
+        private set
+
+    /**
+     * The `feedbackId` of the rating on the current track (needed to
+     * undo it). Belongs to the *previous* track after a track change —
+     * the onTrackChanged observer resets it (pithos keeps it per song).
+     */
+    private var currentFeedbackId: String? = null
+
     // MARK: Intents
 
     /**
@@ -244,6 +260,9 @@ class AmphoraStore {
                 player.setVolume(intent.volume)
                 updatePreferences { it.copy(playbackVolume = intent.volume) }
             }
+            is Intent.RateCurrentTrack ->
+                launchIntent { rateCurrentTrack(intent.rating) }
+            is Intent.RemoveCurrentRating -> launchIntent { removeCurrentRating() }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -268,6 +287,8 @@ class AmphoraStore {
         data object TogglePlayback : Intent()
         data object SkipToNext : Intent()
         data class SetPlaybackVolume(val volume: Float) : Intent()
+        data class RateCurrentTrack(val rating: FeedbackRating) : Intent()
+        data object RemoveCurrentRating : Intent()
         data object DismissError : Intent()
     }
 
@@ -290,10 +311,10 @@ class AmphoraStore {
         // The player asks for more tracks when its queue runs low — pithos
         // preloads the next playlist when one song remains.
         player.onNeedMoreTracks = { fetchMoreTracks() }
-        // A new track means a new per-track state surface. The rating
-        // reset, history record, sleep-timer check, lyrics load and
-        // Last.fm now-playing observers arrive with A5/A6/A8 — this unit
-        // wires the parts playback itself needs (ads).
+        // A new track means a new per-track state surface. The history
+        // record, sleep-timer check, lyrics load and Last.fm now-playing
+        // observers arrive with A5/A6/A8 — this unit wires the rating
+        // reset and the parts playback itself needs (ads).
         player.onTrackChanged.add { track ->
             if (track != null) {
                 AppLog.info(
@@ -303,6 +324,11 @@ class AmphoraStore {
             } else {
                 AppLog.info("track queue empty", AppLog.Category.playback)
             }
+            // A new track means a new rating state: the feedback id
+            // belongs to the previous track (pithos keeps it per song).
+            // The rating comes from the playlist entry (`songRating`).
+            currentFeedbackId = null
+            currentRating = feedbackRatingFor(track?.rating)
             prepareAdIfNeeded(track)
         }
         // "Currently playing" for the Home rows and the hero: the iOS
@@ -853,6 +879,55 @@ class AmphoraStore {
         }
     }
 
+    // MARK: Feedback (the port of AppStore's rating section)
+
+    /**
+     * Rates the current track (thumbs up / down). Pithos `Song.rate`
+     * semantics: the previous feedback is deleted first, then the new
+     * one is set. Tapping the active rating removes it again — the UI
+     * sends `RemoveCurrentRating` for that.
+     */
+    private suspend fun rateCurrentTrack(rating: FeedbackRating) {
+        val track = player.currentTrack.value ?: return
+        if (rating == FeedbackRating.none) return
+        // Ads are not songs — nothing to rate. (The radio guard arrives
+        // with A7: a live stream is not a song either.)
+        if (track.isAdvertisement) return
+        val station = currentStation ?: return
+        lastErrorMessage = null
+        try {
+            currentFeedbackId?.let {
+                session.deleteFeedback(feedbackId = it, stationToken = station.token)
+                currentFeedbackId = null
+            }
+            val receipt = session.addFeedback(
+                trackToken = track.trackToken,
+                stationToken = station.token,
+                rating = rating,
+            )
+            currentFeedbackId = receipt.feedbackId
+            currentRating = rating
+        } catch (error: Exception) {
+            record(error)
+        }
+    }
+
+    /** Removes the rating on the current track (thumbs up/down →
+     *  unrated). Needs the feedback id of the active rating; without it
+     *  there is nothing to undo. */
+    private suspend fun removeCurrentRating() {
+        val feedbackId = currentFeedbackId ?: return
+        val station = currentStation ?: return
+        lastErrorMessage = null
+        try {
+            session.deleteFeedback(feedbackId = feedbackId, stationToken = station.token)
+            currentFeedbackId = null
+            currentRating = FeedbackRating.none
+        } catch (error: Exception) {
+            record(error)
+        }
+    }
+
     // MARK: Skip limit
 
     /** `true` when Pandora's daily skip limit stopped the current
@@ -913,4 +988,12 @@ class AmphoraStore {
             skipLimitStationId = null
         }
     }
+}
+
+/** Maps Pandora's `songRating` onto the app's rating enum (the port of
+ *  AppStore's static `feedbackRating(for:)`). */
+private fun feedbackRatingFor(rating: pandoracore.Track.Rating?): FeedbackRating = when (rating) {
+    pandoracore.Track.Rating.loved -> FeedbackRating.loved
+    pandoracore.Track.Rating.banned -> FeedbackRating.banned
+    null, pandoracore.Track.Rating.none -> FeedbackRating.none
 }

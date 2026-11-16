@@ -11,8 +11,6 @@
 //  shade, never glass.
 //
 //  Arriving with their own units (kept out so nothing ships inert):
-//  - FeedbackBar (thumbs with reasons): A5 — and per iOS it is hidden
-//    for ads/radio anyway.
 //  - Lyrics toolbar button + panel: A6.
 //  - Radio surfaces (LIVE badge, identify status, stop): A7.
 //  - Sleep Timer… / Bookmark Song / Bookmark Artist / Hide This Song
@@ -38,15 +36,11 @@ package dev.personal.amphora.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,7 +85,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -403,7 +396,7 @@ private fun Scrubber(store: AmphoraStore) {
 
 /**
  * Everything below the artwork: ad badge, skip-limit badge, transport,
- * volume, up next. (FeedbackBar is A5; the radio surfaces are A7.)
+ * volume, feedback, up next. (The radio surfaces are A7.)
  */
 @Composable
 private fun PlayerControls(
@@ -445,6 +438,12 @@ private fun PlayerControls(
             onLive = onVolumeLive,
             onSettled = onVolumeSettled,
         )
+        if (!track.isAdvertisement) {
+            // A live radio stream is not a song — there is nothing to
+            // rate (the synthetic `radio.<uuid>` token); that guard
+            // arrives with A7's radio tracks.
+            FeedbackBar(store = store, accent = ArtworkThemeController.colors.accent.asColor())
+        }
         UpNext(
             store = store,
             isExpanded = isShowingUpNext,
@@ -580,43 +579,6 @@ private fun Transport(
             )
         }
     }
-}
-
-/** The iOS PressableButtonStyle as a reusable press-dip button. */
-@Composable
-private fun PressableIconButton(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    glyph: @Composable () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) Pressable.pressedScale else 1f,
-        animationSpec = spring(dampingRatio = 0.55f, stiffness = Pressable.springStiffness),
-        label = "press-scale",
-    )
-    val opacity by animateFloatAsState(
-        targetValue = if (isPressed) Pressable.pressedOpacity else 1f,
-        animationSpec = spring(dampingRatio = 0.55f, stiffness = Pressable.springStiffness),
-        label = "press-opacity",
-    )
-    Box(
-        modifier = modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                alpha = opacity
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            )
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) { glyph() }
 }
 
 /**

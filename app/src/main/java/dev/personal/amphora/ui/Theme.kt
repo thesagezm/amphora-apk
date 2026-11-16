@@ -29,17 +29,22 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import pandoracore.ArtworkColors
 import pandoracore.PaletteColor
@@ -411,4 +416,56 @@ fun RowPressableButton(
     ) {
         content()
     }
+}
+
+/**
+ * `PressableButtonStyle` for a glyph button (the port of the iOS style
+ * applied to an icon control): the control dips 8% and dims with the
+ * soft spring. Lives beside `RowPressableButton` because the press
+ * language is the theme's — the transport, the FeedbackBar and the
+ * Recents rating controls all share it.
+ *
+ * `label` is the accessibility name (`contentDescription`); pass
+ * `stateDescription` for a two-state control ("On"/"Off").
+ */
+@Composable
+fun PressableIconButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    stateDescription: String? = null,
+    glyph: @Composable () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) Pressable.pressedScale else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Pressable.springStiffness),
+        label = "press-scale",
+    )
+    val opacity by animateFloatAsState(
+        targetValue = if (isPressed) Pressable.pressedOpacity else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Pressable.springStiffness),
+        label = "press-opacity",
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = opacity
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            )
+            .semantics {
+                contentDescription = label
+                stateDescription?.let { this.stateDescription = it }
+            },
+        contentAlignment = Alignment.Center,
+    ) { glyph() }
 }

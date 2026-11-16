@@ -14,23 +14,36 @@ before porting any view).
 
 ## Current Milestone
 
-**A4** — playback (the "it works" milestone). User said keep moving
-2026-11-16 while they test A3 in parallel; **A4.1–A4.5 all landed**
-(milestone code-complete). Per AGENTS.md, A5 does not begin until the
-user confirms A4 on their phone (the Definition-of-Demo gate: tap →
-music within ~2s → media notification → thumbs → skip → prefetch →
-survives backgrounding) or says keep moving again.
+**A5** — feedback / bookmarks / history / sleep timer. User said keep
+moving 2026-11-17 (their message pointed at the A5 breakdown) while they
+test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
+(A4.1–A4.5); its demo checklist is still owed from the user.
 
 ## Queue (pending, in order)
 
+- **A5.2** — sleep timer: store countdown (duration + end-of-track
+  modes, restore from preferences, fire-on-expiry pause, end-of-track
+  fire in the onTrackChanged observer) + `SleepTimerSheet` (5 duration
+  rows + End of current track + Cancel timer) + the player-menu
+  "Sleep Timer…"/"Sleep Timer (label)…" item.
+- **A5.3** — bookmarks + sleep-song: store surface
+  (refresh/add/delete + "Song bookmarked" confirmations) + the player
+  menu items Bookmark Song / Bookmark Artist / Hide This Song.
+- **A5.4** — history: app-side `HistoryStore` persistence + `history`
+  state + record-on-track-changed observer (ads/radio excluded) +
+  `rateHistoryTrack`/`removeHistoryTrackRating` + `ratingTrackTokens`.
+- **A5.5** — `RecentsView` (segmented pill: history rows with rating
+  controls + relative time, bookmarks list with delete) + the Home
+  toolbar clock button + sheet host in StationsView.
+- **A5.6** — skip-limit UX parity check + A5 polish.
 - **A4 verification (user)**: install the CI APK artifact (or
   Waydroid once unblocked) and run the demo checklist — launch →
   auto-login → station list → tap a station → audio within ~2s →
   media notification with metadata → lock-screen controls → skip →
   next-track prefetch (Up Next fills) → pause/resume → mini-player →
   full player (scrubber, volume, quality chip, artwork ambient
-  theme) → headphones unplug pauses → no crashes. Report failures;
-  silence is not a blocker.
+  theme, **thumbs up/down now too**) → headphones unplug pauses →
+  no crashes. Report failures; silence is not a blocker.
 - **BLOCKED on user action — Waydroid smoke test**: the container
   service needs root (`sudo systemctl start waydroid-container`, or
   however they normally start Waydroid); agent-side `sudo` requires a
@@ -100,6 +113,28 @@ survives backgrounding) or says keep moving again.
 
 ## Log
 
+- 2026-11-17 — **A5.1 landed — feedback: store surface + FeedbackBar**
+  (user said keep moving into A5 in the same message that pointed at
+  the handover): `AmphoraStore` grows `currentRating` +
+  `currentFeedbackId` (private; reset per track in the onTrackChanged
+  observer — pithos keeps the id per song) + intents
+  RateCurrentTrack/RemoveCurrentRating (`rateCurrentTrack` deletes the
+  previous feedback first, then adds — pithos `Song.rate`;
+  `removeCurrentRating` needs the id, without it there is nothing to
+  undo); rating comes from the playlist entry (`songRating`) via the
+  `feedbackRatingFor` port of AppStore's static helper. +
+  `ui/FeedbackBar.kt` (52dp glyphs 64 apart, accent when active, tap
+  toggles off, haptics.light, Crossfade glyph swap, "On"/"Off"
+  stateDescription) slotted into PlayerControls between volume and Up
+  Next (iOS order), hidden for ads (the radio guard arrives with A7).
+  `Theme.kt` grows the shared `PressableIconButton` (the
+  PressableButtonStyle-as-icon-button port; NowPlayingView's private
+  copy deleted — transport + FeedbackBar + upcoming Recents rows share
+  it). Note: iOS has no "why" reason UI (grep empty; the legacy v5 API
+  carries no reason param — core Feedback.kt documents it), so the
+  port is plain thumbs like iOS. Icon pair: Material
+  ThumbUpOffAlt/ThumbUp (no *Outlined variants in the rounded set).
+  Local gate green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-16 — **A4.5 landed — robustness pass, A4 code-complete**:
   `PlaybackService` grows a named notification channel ("playback" /
   "Playback" — the provider builder takes a @StringRes channel name,
