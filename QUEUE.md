@@ -14,11 +14,31 @@ before porting any view).
 
 ## Current Milestone
 
-**A3** — stations (A2 auth code-complete 2026-11-16, local gate green;
-CI verdict pending on the handover push — check `gh run list` first).
+**A4** — playback (the "it works" milestone). User said keep moving
+2026-11-16 while they test A3 on their phone in parallel. **A4.1
+landed** (player infrastructure); A4.2 next.
 
 ## Queue (pending, in order)
 
+- **A4.2 — store playback surface**: `player` owned by the store
+  (PlaybackClient), `PlayStation`/`TogglePlayback`/`SkipToNext`
+  intents, playlist fetch + playable filter, `queuedTrackTokens`
+  dedupe, fetchMoreTracks + 5/15/30 s backoff retry, skip-limit
+  handling (`handleSkipLimit` port: `skipLimitStationId` +
+  "stops asking"), `isPlayingCurrentStation` wiring, ad-skip refusal
+  copy, `lastStationId` persist, mode-change restart seam
+  (confirmation toast + playlist restart documented in the store).
+- **A4.3 — stations wiring + MiniPlayer**: StationsView row taps +
+  hero play button call `.playStation`, playing-row glyph off
+  `isPlayingCurrentStation` + quickmix row behavior; MainTabView
+  grows the mini-player slot + NowPlayingView sheet host;
+  `ui/MiniPlayer.kt` port (progress hairline, toggle/skip, caption;
+  AirPlay route picker → out of scope, system output switching per
+  AGENTS.md deprioritization).
+- **A4.4 — NowPlayingView + PlayerScrubber**: read the SwiftUI files
+  first, port view-for-view minus FeedbackBar (thumbs are A5).
+- **A4.5 — robustness pass**: error states, session-expiry during
+  playlist fetch, notification polish, QUEUE deltas.
 - **BLOCKED on user action — Waydroid smoke test**: the container
   service needs root (`sudo systemctl start waydroid-container`, or
   however they normally start Waydroid); agent-side `sudo` requires a
@@ -27,16 +47,8 @@ CI verdict pending on the handover push — check `gh run list` first).
   launch → login screen → wrong-password error copy → real login →
   signed-in → station list renders. Per user directive (2026-11-16):
   Waydroid ONLY, never an emulator.
-- **A3 verification**: after the smoke test, the user tests on their
-  phone via the CI APK artifact. A4 begins on their confirmation (or
-  an explicit "keep moving").
-- **A4 (next milestone)**: playback — `Media3 ExoPlayer` +
-  `MediaSessionService`, playlist fetch wired to `.playStation`
-  (row taps + hero play button light up then), media notification,
-  prefetch (current + next queue), mini-player + `NowPlayingView`,
-  interruption handling, artwork cache port, mini-player inset seam
-  (`MainTabView`), skip-limit UX (`skipLimitStationId` +
-  `isPlayingCurrentStation` + `PlaylistError` copy all landed).
+- **A3 verification**: the user tests on their phone via the CI APK
+  artifact in parallel with A4 (explicit "keep moving" received).
 - **A3 shipped-deltas** (each documented in its file header):
   row taps start playback — A4 wiring (rows are long-press-only until
   then, so no dead tap); recents toolbar button — A5 (with
@@ -49,13 +61,11 @@ CI verdict pending on the handover push — check `gh run list` first).
   `SubcomposeAsyncImage` wants the `loading`/`error`/`success` slot
   overload (matching `painter.state` inside the scope confuses K2's
   typing); `SleepTimer()` is private — use `SleepTimer.off`.
-- **A2 verification owed before A4** (user-perceived): Waydroid smoke
-  test — launch → login screen → wrong password shows the typed error
-  copy → real login lands signed-in. Then user phone install via the
-  CI APK artifact.
-- **A4** — playback: Media3 ExoPlayer + `MediaSessionService`, media
-  notification, prefetch, mini-player + `NowPlayingView` (the "it
-  works" milestone).
+- **Porting notes learned in A4.1** (media3 1.8.0): the transition
+  constant is `Player.MEDIA_ITEM_TRANSITION_REASON_AUTO` (not
+  `…_TRANSITION_AUTO`); a constructor param must be `private val` to
+  be visible in methods; `MediaMetadata.setArtworkUri` wants `Uri?`,
+  not `String?`.
 - **A5** — feedback / bookmarks / history / sleep timer.
 - **A6** — lyrics (lrclib + translation + fallbacks + romanization).
 - **A7** — radio mode (RadioBrowser + ICY probe + live-lag scheduling).
@@ -82,6 +92,29 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **A4.1 landed — player infrastructure**:
+  `player/PlaybackService.kt` (Media3 port of PlayerService +
+  NowPlayingService unified: ExoPlayer with audio-focus interruption
+  handling + noisy-unplug pause + 30/60 s buffer tuning (the iOS
+  preferredForwardBufferDuration=30 port) + wake-mode network + ±15 s
+  seek increments (the lock-screen skip±15 port); MediaSession with a
+  session-activity intent; default media notification via
+  MediaSessionService; onTaskRemoved stops the dead service) +
+  `player/PlaybackClient.kt` (the PlayerService API surface behind a
+  MediaController: same names — play/enqueue/skipToNext/pause/resume/
+  togglePlayback/seek/skip±/stop/setVolume/clearError; StateFlow ports
+  of the @Observable state; observer-list ports of onTrackChanged/
+  onTrackFinished/onTrackEnded/onNeedMoreTracks/onPlaybackFailed with
+  the iOS ordering contract (finish before track-changed); 0.5 s
+  elapsed ticker; trackToken→Track resolution map; connect retry ×3 →
+  fail("Couldn't start audio output."), never a crash) + manifest
+  service entry (exported, mediaPlayback foreground type). Port deltas
+  in the file headers: commands fire-and-forget on one main dispatcher
+  (IPC ordering preserved), resetQueue's pause-then-drop unneeded
+  (clearMediaItems drops the playing item + fires the null transition,
+  which is where the outgoing track is reported), interruption/route
+  observers are platform-handled. Local gate green: `:core:test` +
+  `:app:assembleDebug`. CI verdict pending on push.
 - 2026-11-16 — **Waydroid smoke test attempted, blocked on root**:
   Waydroid installed (`/usr/bin/waydroid`, MAINLINE vendor) but
   Session STOPPED; `waydroid session start` cannot run without the
