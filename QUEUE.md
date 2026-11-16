@@ -25,10 +25,10 @@ CI verdict pending on the handover push — check `gh run list` first).
   delete intents, `PreferencesStore` port (JSON file in `filesDir`),
   genre stations + AddStation flow. Replace `RootView`'s
   `PlaceholderHome`.
-- **A2 verification owed before A4** (user-perceived): emulator smoke
-  test (android-36 google_apis image installed) — launch → login
-  screen → wrong password shows the typed error copy → real login
-  lands signed-in. Then user phone install via the CI APK artifact.
+- **A2 verification owed before A4** (user-perceived): Waydroid smoke
+  test — launch → login screen → wrong password shows the typed error
+  copy → real login lands signed-in. Then user phone install via the
+  CI APK artifact.
 - **A3** — stations: fetch/list/reorder/create/rename/delete/search/
   genres, preferences store, mini-tab scaffold.
 - **A4** — playback: Media3 ExoPlayer + `MediaSessionService`, media
@@ -45,12 +45,17 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## User Feedback Pending
 
-(none yet — first session)
+- **2026-11-16, user (standing directive): device testing via Waydroid
+  ONLY — no Android emulator, ever.** Overrides the AGENTS.md
+  "emulator for smoke tests" line (AGENTS.md itself must not be edited
+  by the agent). All on-device validation (smoke tests, UI checks,
+  installs) goes through Waydroid with `adb connect`. No subagents —
+  reconfirmed.
 
 ## Environment Notes (this machine)
 
-- SDK `~/android-sdk` (android-36, build-tools 36.0.0, emulator +
-  google_apis system image); JDK 17 at `~/tools/jdk-17.0.13+11`;
+- SDK `~/android-sdk` (android-36, build-tools 36.0.0); JDK 17 at
+  `~/tools/jdk-17.0.13+11`;
   gradle-8.14.3 wrapper dist cached in `~/.gradle/wrapper/dists`.
 - Local builds are synchronous — no CI, no waiting. Green build → commit.
 - iOS source of truth: `~/Amphora-ios` (PandoraCore for `:core`,
@@ -103,7 +108,7 @@ CI verdict pending on the handover push — check `gh run list` first).
   Next agent starts A3 (stations UI) — read AGENTS.md, then QUEUE.md,
   then the iOS `MainTabView.swift`/`StationsView.swift` before writing
   any Composable. No subagents. Commit every green unit. CI green =
-  the verdict; the emulator smoke test listed above is owed before
+  the verdict; the Waydroid smoke test listed above is owed before
   A4's "it works" claim. `PlaceholderHome` in RootView is the only
   user-reachable placeholder (explicitly an A3 stub — replace it
   first).
