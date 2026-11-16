@@ -14,20 +14,16 @@ before porting any view).
 
 ## Current Milestone
 
-**A5** — feedback / bookmarks / history / sleep timer: **A5.1–A5.6 all
-landed (milestone code-complete)**. User said keep moving 2026-11-17
-(their message pointed at the A5 breakdown) while they test A4 in
-parallel. A4 is code-complete and CI-green (A4.1–A4.5); both demo
-checklists are owed from the user. Per AGENTS.md, A6 does not begin
-until the user confirms A4/A5 on their phone or says keep moving again.
+**A6** — lyrics (lrclib + translation + fallbacks + romanization):
+**A6.1–A6.2 landed (milestone code-complete)**. A5 landed
+code-complete and CI-green before it (A5.1–A5.6); A4 before that.
+Keep-moving instructions received for A4→A5→A6 while the user tests in
+parallel; the phone demo checklists (A4 + A5, below) are still owed.
+Per AGENTS.md, A7 does not begin until the user confirms A4/A5/A6 on
+their phone or says keep moving again.
 
 ## Queue (pending, in order)
 
-- **A6.2** — `LyricsPanel` (synced lines scrolling with playback,
-  tap-to-seek, translation bar with Translate/Retry, romanization
-  reading line, plain-text view, instrumental/no-lyrics states) + the
-  NowPlayingView lyrics toolbar toggle (the artwork/header/scrubber
-  region swaps for the panel; transport stays fixed).
 - **A5 verification (user)**: thumbs up/down on the full player (tap
   the active one to undo), the player ⋯ menu (Sleep Timer… incl. the
   live label, Tune Station…, Bookmark Song/Artist → "Song/Artist
@@ -35,6 +31,12 @@ until the user confirms A4/A5 on their phone or says keep moving again.
   button → Recents sheet (segment pill, rate a past track, relative
   times, delete a bookmark), sleep timer pausing at the deadline /
   end of track, skip-limit badge + "Skip limit reached" row caption.
+- **A6 verification (user)**: play a song → tap the quote button in
+  the full player → synced lyrics scroll with playback, tap a line
+  seeks; foreign song → auto/manual Translate ("Translated"/"Already
+  in English"/failure with Retry); a non-Latin song shows the
+  romanization reading line; a song with no lyrics shows "No lyrics"
+  + Retry.
 - **A4 verification (user)**: install the CI APK artifact (or
   Waydroid once unblocked) and run the demo checklist — launch →
   auto-login → station list → tap a station → audio within ~2s →
@@ -112,6 +114,25 @@ until the user confirms A4/A5 on their phone or says keep moving again.
 
 ## Log
 
+- 2026-11-17 — **A6.2 landed — LyricsPanel + the player lyrics
+  toggle, A6 code-complete**: `ui/LyricsPanel.kt` (port of
+  LyricsPanel.swift: the translation bar — "Translating…" spinner /
+  checkmark "Translated" in the artwork accent / "Already in English" /
+  yellow failure message with a **Translate**-→-**Retry** rounded
+  accent-wash button; synced lyrics — LazyColumn of lines, active line
+  highlighted white/accent, tap-a-line seeks, romanization reading
+  line over the original script with the translation beneath,
+  lineLimit 3; auto-scroll via animateScrollToItem on activeIndex
+  change + a 150ms landing scroll on arrival (iOS's `.task`); plain
+  lyrics with the translation under a divider; Instrumental and
+  "No lyrics" + Retry states) + NowPlayingView grows the lyrics
+  toolbar toggle (quote glyph, accent-tinted while shown,
+  "Show/Hide lyrics" description) and swaps the artwork/header/
+  scrubber region for the panel with the transport fixed below
+  (iOS's VStack branch). Port deltas: SF quote.bubble(.fill) → one
+  Material FormatQuote tinted; ScrollViewReader center-anchor →
+  animateScrollToItem; `.bordered`+`.tint` → rounded accent-wash
+  button. Local gate green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-17 — **A6.1 landed — store lyrics section** (user said
   keep moving into A6; port of AppStore's Lyrics section, radio
   branch documented as the A7 seam): `AmphoraStore` grows

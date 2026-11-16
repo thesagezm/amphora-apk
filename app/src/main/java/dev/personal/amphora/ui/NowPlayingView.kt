@@ -11,10 +11,10 @@
 //  shade, never glass.
 //
 //  Arriving with their own units (kept out so nothing ships inert):
-//  - Lyrics toolbar button + panel: A6.
 //  - Radio surfaces (LIVE badge, identify status, Identify Song menu
-//    item, stop): A7 — the menu's radio branch guards the song-level
-//    items away there; until A7 the menu always shows the song branch.
+//    item, stop, the radio guard on the lyrics toolbar button): A7 —
+//    the menu's radio branch guards the song-level items away there;
+//    until A7 the menu always shows the song branch.
 //  - The AirPlay route picker + route indicator: out of scope
 //    (AGENTS.md deprioritizes the output picker).
 //
@@ -62,6 +62,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.FormatQuote
 import androidx.compose.material.icons.rounded.HearingDisabled
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
@@ -113,6 +114,7 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
     var isShowingActions by remember { mutableStateOf(false) }
     var isShowingTuning by remember { mutableStateOf(false) }
     var isShowingSleepTimer by remember { mutableStateOf(false) }
+    var isShowingLyrics by remember { mutableStateOf(false) }
     var isShowingUpNext by remember { mutableStateOf(false) }
     // The volume while the slider is being dragged. The level is
     // applied live, but it is only written to disk when the drag ends.
@@ -235,6 +237,22 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                 )
+                // The lyrics toggle (iOS: quote.bubble/quote.bubble.fill
+                // — one Material glyph, tinted while shown; the radio
+                // guard on the button arrives with A7).
+                IconButton(
+                    onClick = { isShowingLyrics = !isShowingLyrics },
+                    modifier = Modifier.semantics {
+                        contentDescription =
+                            if (isShowingLyrics) "Hide lyrics" else "Show lyrics"
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FormatQuote,
+                        contentDescription = null,
+                        tint = if (isShowingLyrics) theme.accent else labelColor(theme),
+                    )
+                }
                 TextButton(
                     onClick = onDismiss,
                     modifier = Modifier.padding(end = 4.dp),
@@ -246,6 +264,45 @@ fun NowPlayingView(store: AmphoraStore, onDismiss: () -> Unit) {
             val current = track
             if (current == null) {
                 NothingPlaying()
+            } else if (isShowingLyrics) {
+                // The lyrics panel scrolls itself; the transport stays
+                // fixed (iOS: VStack { LyricsPanel; playerControls }).
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        LyricsPanel(store = store)
+                    }
+                    PlayerControls(
+                        store = store,
+                        track = current,
+                        playing = playing,
+                        haptics = haptics,
+                        isShowingUpNext = isShowingUpNext,
+                        onToggleUpNext = { isShowingUpNext = !isShowingUpNext },
+                        draftVolume = draftVolume,
+                        onVolumeLive = { draftVolume = it },
+                        onVolumeSettled = { live ->
+                            store.send(AmphoraStore.Intent.SetPlaybackVolume(live))
+                            draftVolume = null
+                        },
+                    )
+                    Confirmation(store)
+                    if (errorMessage != null) {
+                        Text(
+                            text = errorMessage.orEmpty(),
+                            fontSize = 13.sp,
+                            color = Color(0xFFFFD60A),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 8.dp),
+                        )
+                    }
+                }
             } else {
                 // One fixed stack, Apple-Music-shaped: the artwork and
                 // the controls are children of the same layout; when
