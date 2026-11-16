@@ -155,6 +155,23 @@ class AmphoraStore {
     var stationCreatedTick: Int by mutableStateOf(0)
         private set
 
+    // MARK: Observable state (station modes / tuning)
+
+    /** The listening modes of `modesStationId`'s station. */
+    var stationModes: pandoracore.StationModes? by mutableStateOf(null)
+        private set
+    var isLoadingModes: Boolean by mutableStateOf(false)
+        private set
+    var isChangingMode: Boolean by mutableStateOf(false)
+        private set
+    /** Bumped on every successful mode change — the tune sheet's
+     *  dismiss signal. */
+    var stationModeChangedTick: Int by mutableStateOf(0)
+        private set
+    /** Which station `stationModes` describes (the sheet may tune a
+     *  concrete station while another one plays). */
+    private var modesStationId: String? = null
+
     private var searchJob: kotlinx.coroutines.Job? = null
 
     // MARK: Intents
@@ -180,6 +197,10 @@ class AmphoraStore {
             is Intent.CreateGenreStation ->
                 launchIntent { createStation(musicToken = intent.station.token) }
             is Intent.LoadGenreStations -> launchIntent { loadGenreStations() }
+            is Intent.LoadStationModes ->
+                launchIntent { loadStationModes(intent.station) }
+            is Intent.SetStationMode ->
+                launchIntent { setStationMode(intent.mode, intent.station) }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -195,6 +216,11 @@ class AmphoraStore {
         data class CreateStation(val result: pandoracore.MusicSearchResult) : Intent()
         data class CreateGenreStation(val station: pandoracore.GenreStation) : Intent()
         data object LoadGenreStations : Intent()
+        data class LoadStationModes(val station: pandoracore.Station?) : Intent()
+        data class SetStationMode(
+            val mode: pandoracore.StationMode,
+            val station: pandoracore.Station?,
+        ) : Intent()
         data object DismissError : Intent()
     }
 
@@ -455,6 +481,55 @@ class AmphoraStore {
             record(error)
         } finally {
             isLoadingGenres = false
+        }
+    }
+
+    // MARK: Station modes (tuning)
+
+    private suspend fun loadStationModes(station: pandoracore.Station?) {
+        val target = station ?: currentStation ?: return
+        if (isLoadingModes || isChangingMode) return
+        isLoadingModes = true
+        try {
+            val modes = session.getStationModes(target)
+            stationModes = modes
+            modesStationId = target.id
+            AppLog.info(
+                "station modes: ${modes.modes.size} offered for \"${target.name}\"",
+                AppLog.Category.app,
+            )
+        } catch (error: Exception) {
+            AppLog.error("station modes failed: $error")
+            record(error)
+        } finally {
+            isLoadingModes = false
+        }
+    }
+
+    private suspend fun setStationMode(
+        mode: pandoracore.StationMode,
+        station: pandoracore.Station?,
+    ) {
+        val target = station ?: currentStation ?: return
+        if (isChangingMode) return
+        isChangingMode = true
+        try {
+            // previousModeId only counts when the cached modes describe
+            // this same station.
+            val previous = if (modesStationId == target.id) stationModes?.currentModeID else null
+            val updated = session.setStationMode(mode, target, previous)
+            stationModes = updated
+            modesStationId = target.id
+            stationModeChangedTick += 1
+            // The playing-station path ("a successful change starts a
+            // new song" — confirmation toast + playlist restart) is A4
+            // wiring with the player; tuning for next play is complete.
+            AppLog.info("station mode set for next play: ${mode.name} on \"${target.name}\"")
+        } catch (error: Exception) {
+            AppLog.error("station mode ${mode.name} failed: $error")
+            record(error)
+        } finally {
+            isChangingMode = false
         }
     }
 

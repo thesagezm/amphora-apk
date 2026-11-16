@@ -70,6 +70,7 @@ import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -119,11 +120,11 @@ fun StationsView(store: AmphoraStore) {
     val theme = Theme.tokens()
 
     // iOS `@State` per concern: rename target + text, delete target,
-    // edit-mode reorder, sheet presentation (tune target arrives with
-    // A3.5's sheet).
+    // edit-mode reorder, sheet presentation.
     var renameTarget by remember { mutableStateOf<Station?>(null) }
     var renameText by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<Station?>(null) }
+    var tuneTarget by remember { mutableStateOf<Station?>(null) }
     var isEditingOrder by remember { mutableStateOf(false) }
     var isAddingStation by remember { mutableStateOf(false) }
     var isBrowsingStations by remember { mutableStateOf(false) }
@@ -188,6 +189,7 @@ fun StationsView(store: AmphoraStore) {
                         renameTarget = station
                     },
                     onDelete = { deleteTarget = it },
+                    onTune = { tuneTarget = it },
                 )
             }
         }
@@ -243,6 +245,15 @@ fun StationsView(store: AmphoraStore) {
             containerColor = theme.background,
         ) {
             BrowseStationsSheet(store = store, onDismiss = { isBrowsingStations = false })
+        }
+    }
+    tuneTarget?.let { station ->
+        ModalBottomSheet(
+            onDismissRequest = { tuneTarget = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = theme.background,
+        ) {
+            TuneStationSheet(store = store, station = station, onDismiss = { tuneTarget = null })
         }
     }
 }
@@ -371,6 +382,7 @@ private fun StationList(
     onBrowse: () -> Unit,
     onRename: (Station) -> Unit,
     onDelete: (Station) -> Unit,
+    onTune: (Station) -> Unit,
 ) {
     val theme = Theme.tokens()
     val listState = rememberLazyListState()
@@ -442,6 +454,7 @@ private fun StationList(
                         },
                         onRename = onRename,
                         onDelete = onDelete,
+                        onTune = onTune,
                     )
                 }
             }
@@ -479,7 +492,7 @@ private fun ReorderableStationRow(
     store: AmphoraStore,
     station: Station,
     isEditingOrder: Boolean,
-    listState: androidx.compose.foundation.lazy.LazyListState,
+    listState: LazyListState,
     draggingId: String?,
     draggingOffset: Float,
     onDragStart: () -> Unit,
@@ -487,6 +500,7 @@ private fun ReorderableStationRow(
     onDragEnd: () -> Unit,
     onRename: (Station) -> Unit,
     onDelete: (Station) -> Unit,
+    onTune: (Station) -> Unit,
 ) {
     val isDragging = draggingId == station.id
     Box(
@@ -503,6 +517,7 @@ private fun ReorderableStationRow(
             onDragEnd = onDragEnd,
             onRename = onRename,
             onDelete = onDelete,
+            onTune = onTune,
         )
     }
 }
@@ -524,6 +539,7 @@ private fun StationListRow(
     onDragEnd: () -> Unit,
     onRename: (Station) -> Unit,
     onDelete: (Station) -> Unit,
+    onTune: (Station) -> Unit,
 ) {
     val theme = Theme.tokens()
     val isCurrent = store.currentStation?.id == station.id
@@ -617,7 +633,8 @@ private fun StationListRow(
             }
         }
 
-        // The context menu (iOS `.contextMenu`): Tune joins in A3.5;
+        // The context menu (iOS `.contextMenu`): QuickMix is an
+        // aggregator — Pandora offers it no listening modes to tune;
         // pithos' edit dialog filters quickmix + thumbprint out of
         // rename/delete — mirrored here.
         DropdownMenu(
@@ -625,6 +642,18 @@ private fun StationListRow(
             onDismissRequest = { menuOpen = false },
             containerColor = theme.surface,
         ) {
+            if (!station.isQuickMix) {
+                DropdownMenuItem(
+                    text = { Text("Tune Station…", color = labelColor(theme)) },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.Tune, contentDescription = null, tint = labelColor(theme))
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onTune(station)
+                    },
+                )
+            }
             if (!station.isQuickMix && !station.isThumbprint) {
                 DropdownMenuItem(
                     text = { Text("Rename", color = labelColor(theme)) },

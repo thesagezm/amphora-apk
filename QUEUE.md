@@ -19,10 +19,15 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3.5 (next)**: `TuneStationSheet` + the Tune context item + station
-  search polish (store: search intent landed in A3.4;
-  `SessionManager.search` exists; TuneStationSheet reads
-  `SessionManager.getStationModes`).
+- **A3 verification owed**: Waydroid smoke test (see below) once the
+  A3.5 CI run is green. Then the user phone test of A3.
+- **A4 (next milestone)**: playback — `Media3 ExoPlayer` +
+  `MediaSessionService`, playlist fetch wired to `.playStation`
+  (row taps + hero play button light up then), media notification,
+  prefetch (current + next queue), mini-player + `NowPlayingView`,
+  interruption handling, artwork cache port, mini-player inset seam
+  (`MainTabView`), skip-limit UX (`skipLimitStationId` +
+  `isPlayingCurrentStation` + `PlaylistError` copy all landed).
 - **A3 shipped-deltas** (each documented in its file header):
   row taps start playback — A4 wiring (rows are long-press-only until
   then, so no dead tap); recents toolbar button — A5 (with
@@ -68,6 +73,19 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **A3.5 landed — A3 units complete**: store gains the
+  tuning surface (`stationModes`/`isLoadingModes`/`isChangingMode`/
+  `stationModeChangedTick` + private `modesStationId`, intents
+  LoadStationModes/SetStationMode; previousModeID only when the cached
+  modes describe the same station; the playing-station restart +
+  confirmation toast is A4 wiring, documented in the store) +
+  `ui/TuneStationSheet.kt` (mode rows with Premium capsule +
+  checkmark, selectability via `isSelectable(isSubscriber)`, footer
+  "Changing modes starts a new song."/"Changing mode…", inline error
+  section, no-options/error/loading states, tick-dismiss) + the Tune
+  Station… context item (quickmix-guarded) + its sheet host. Local
+  gate green: 372/372 + APK. **A3 milestone code-complete** — CI
+  verdict pending on this push, then Waydroid smoke test.
 - 2026-11-16 — **A3.4 landed**: store gains the search/create surface
   (`searchResults`/`isSearching`/`genreCategories`/`isLoadingGenres`/
   `stationCreatedTick`, intents SearchStations/CreateStation/
