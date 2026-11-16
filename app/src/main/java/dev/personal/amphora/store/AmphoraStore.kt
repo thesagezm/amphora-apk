@@ -30,6 +30,7 @@ import dev.personal.amphora.pandora.OkHttpPandoraTransport
 import dev.personal.amphora.pandora.OkHttpRadioBrowserTransport
 import dev.personal.amphora.player.PlaybackClient
 import dev.personal.amphora.player.PlaybackState
+import dev.personal.amphora.player.RadioMetadataProbe
 import dev.personal.amphora.support.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,9 +38,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import pandoracore.Bookmark
 import pandoracore.FeedbackRating
 import pandoracore.GoogleTranslateClient
+import pandoracore.ITunesSongArtworkClient
 import pandoracore.LastFmClient
 import pandoracore.LegacyPandoraClient
 import pandoracore.Lyrics
@@ -52,6 +55,8 @@ import pandoracore.PandoraTransportError
 import pandoracore.PlaylistError
 import pandoracore.PlayHistory
 import pandoracore.RadioBrowserClient
+import pandoracore.RadioNowPlaying
+import pandoracore.SongArtwork
 import pandoracore.isRadio
 import pandoracore.radioTrack
 import pandoracore.SessionManager
@@ -94,6 +99,25 @@ sealed class LyricsTranslationState {
 
     /** The request failed. The user can try again. */
     data class Failed(val message: String) : LyricsTranslationState()
+}
+
+/**
+ * How far the radio now-playing identification has come for the screen
+ * that is playing (the port of AppStore's nested `RadioIdentification`).
+ */
+enum class RadioIdentification {
+    /** Not a radio stream (or playback stopped). */
+    inactive,
+
+    /** The probe is connected and listening; no title yet. */
+    identifying,
+
+    /** A song is announced (`radioNowPlaying`). */
+    identified,
+
+    /** The station sends no ICY metadata — it announces nothing and
+     *  can only be identified by hand if a lookup ever supports it. */
+    stationAnnouncesNothing,
 }
 
 class AmphoraStore {
@@ -332,6 +356,45 @@ class AmphoraStore {
     var radioCustomStations: List<pandoracore.RadioStation> by mutableStateOf(emptyList())
         private set
 
+    // MARK: Radio now-playing identification (ICY metadata)
+
+    /** Reads the playing radio station's ICY now-playing metadata over
+     *  its own parallel connection (read-only — the audio path is the
+     *  player's). */
+    private val radioMetadataProbe = RadioMetadataProbe()
+
+    /** Song-artwork lookup for a radio station's identified song. */
+    private val songArtworkClient = ITunesSongArtworkClient(transport = OkHttpGetTransport())
+
+    /** The song the playing radio station's ICY metadata is announcing
+     *  ("Artist - Title" split by the core parser). */
+    var radioNowPlaying: pandoracore.RadioNowPlaying? by mutableStateOf(null)
+        private set
+
+    /** Where the radio song identification stands for the UI. */
+    var radioIdentification: RadioIdentification by
+        mutableStateOf(RadioIdentification.inactive)
+        private set
+
+    /** The identified radio song's cover (iTunes Search). */
+    var radioSongArtwork: pandoracore.SongArtwork? by mutableStateOf(null)
+        private set
+
+    /** True while the identified song's artwork lookup is in flight. */
+    var isIdentifyingRadioSong: Boolean by mutableStateOf(false)
+        private set
+
+    /**
+     * The synthetic track whose lyrics are on screen while a radio
+     * station's identified song owns the lyrics panel (the player's
+     * current track is still the stream).
+     */
+    private var radioLyricsToken: String? = null
+    private var radioLyricsTrack: Track? = null
+
+    private var radioLookupJob: Job? = null
+    private var radioAnnouncementJob: Job? = null
+
     // MARK: Observable state (lyrics)
 
     /** The lyrics of the current track (the core provider chain's
@@ -421,9 +484,10 @@ class AmphoraStore {
                     rateHistoryTrack(FeedbackRating.none, intent.entry, intent.station)
                 }
             is Intent.RefreshLyrics ->
-                loadLyrics(player.currentTrack.value, force = true)
+                loadLyrics(currentLyricsTrack(), force = true)
             is Intent.TranslateLyrics ->
-                requestTranslation(player.currentTrack.value, manual = true)
+                requestTranslation(currentLyricsTrack(), manual = true)
+            is Intent.IdentifyRadioSong -> identifyRadioSongIntent()
             is Intent.PlayRadioStation -> playRadio(intent.station)
             is Intent.StopRadio -> stopRadio()
             is Intent.ToggleRadioFavorite ->
@@ -486,6 +550,9 @@ class AmphoraStore {
         ) : Intent()
         data object RefreshLyrics : Intent()
         data object TranslateLyrics : Intent()
+        /** The Identify button: retries the announced song's artwork +
+         *  lyrics lookup (an automatic attempt may have found nothing). */
+        data object IdentifyRadioSong : Intent()
         data class PlayRadioStation(val station: pandoracore.RadioStation) : Intent()
         data object StopRadio : Intent()
         data class ToggleRadioFavorite(val station: pandoracore.RadioStation) : Intent()
@@ -934,9 +1001,9 @@ class AmphoraStore {
             // over from a radio stream. Leaving `currentRadioStation`
             // set would keep the radio row marked as playing and make
             // "next" stop the (already stopped) radio stream instead of
-            // skipping the Pandora track. (The probe stop lands with
-            // A7.4's identification wiring.)
+            // skipping the Pandora track.
             currentRadioStation = null
+            stopRadioIdentification()
             // A different station invalidates the cached listening modes.
             stationModes = null
             modesStationId = null
@@ -1228,9 +1295,9 @@ class AmphoraStore {
         else -> "empty"
     }
 
-    /** `true` when `token` is the track whose lyrics are on screen. */
-    private fun isCurrentLyricsToken(token: String): Boolean =
-        player.currentTrack.value?.trackToken == token
+    /** `true` when `token` is the track whose lyrics are on screen —
+     *  the radio-aware version lives in the radio section (an
+     *  identified radio song's synthetic token owns the panel there). */
 
     /**
      * Translates the current lyrics into English.
@@ -1426,8 +1493,8 @@ class AmphoraStore {
         recordRadioRecent(station)
         player.playLiveStream(track = radioTrack(station))
         // Listen along for the station's now-playing announcements (the
-        // probe holds its own read-only connection) — the identification
-        // wiring lands with A7.4 (RadioMetadataProbe).
+        // probe holds its own read-only connection).
+        startRadioIdentification(station)
         // Directory click counter (Shortwave parity) — best-effort,
         // never blocks playback. Custom stations aren't in the
         // directory, so there is nothing to count.
@@ -1437,13 +1504,15 @@ class AmphoraStore {
         }
     }
 
-    /** Stops radio playback and forgets the station. (The probe stop
-     *  lands with A7.4's identification wiring.) */
+    /** Stops radio playback and forgets the station. The moment
+     *  playback stops the probe's second connection goes too
+     *  (bandwidth). */
     private fun stopRadio() {
         if (currentRadioStation == null) return
         AppLog.info("radio: stopped", AppLog.Category.playback)
         currentRadioStation = null
         lyrics = null
+        stopRadioIdentification()
         player.stop()
     }
 
@@ -1455,6 +1524,217 @@ class AmphoraStore {
             radioRecents = radioRecents.dropLast(radioRecents.size - 20)
         }
         updatePreferences { it.copy(radioRecents = radioRecents) }
+    }
+
+    // MARK: Radio now-playing identification (ICY metadata)
+
+    /**
+     * Starts listening to the station's stream metadata. A late event
+     * from a previous station's probe is dropped by the identity check
+     * in the delivery hop.
+     */
+    private fun startRadioIdentification(station: pandoracore.RadioStation) {
+        radioNowPlaying = null
+        radioIdentification = RadioIdentification.identifying
+        if (station.streamURL.toHttpUrlOrNull() == null) {
+            AppLog.info(
+                "radio metadata: station has no usable stream URL",
+                AppLog.Category.playback,
+            )
+            return
+        }
+        val stationUUID = station.uuid
+        val probe = radioMetadataProbe
+        probe.start(url = station.streamURL) { event ->
+            // The probe delivers from a background thread — hop the
+            // state handling onto main (iOS: Task { @MainActor … }).
+            intentScope.launch {
+                if (currentRadioStation?.uuid != stationUUID) return@launch
+                handleRadioMetadata(event)
+            }
+        }
+    }
+
+    /**
+     * Stops the probe and clears the identification — the moment
+     * playback stops the second connection goes too (bandwidth).
+     */
+    private fun stopRadioIdentification() {
+        radioNowPlaying = null
+        radioIdentification = RadioIdentification.inactive
+        radioSongArtwork = null
+        isIdentifyingRadioSong = false
+        radioLyricsToken = null
+        radioLyricsTrack = null
+        radioLookupJob?.cancel()
+        radioLookupJob = null
+        radioAnnouncementJob?.cancel()
+        radioAnnouncementJob = null
+        radioMetadataProbe.stop()
+    }
+
+    private fun handleRadioMetadata(event: RadioMetadataProbe.Event) {
+        when (event) {
+            RadioMetadataProbe.Event.Listening -> {
+                // Connected; a title is expected but has not arrived.
+                if (radioNowPlaying == null) {
+                    radioIdentification = RadioIdentification.identifying
+                }
+            }
+            is RadioMetadataProbe.Event.Announced ->
+                scheduleRadioAnnouncement(event.nowPlaying)
+            RadioMetadataProbe.Event.AnnouncesNothing ->
+                radioIdentification = RadioIdentification.stationAnnouncesNothing
+        }
+    }
+
+    /**
+     * Applies an announcement when the *audio* reaches it.
+     *
+     * The probe reads the station's metadata at the stream's live
+     * edge, but the player buffers behind that edge (up to 30 s of the
+     * forward-buffer tuning) — applying the announcement the moment it
+     * arrives swapped the header, the cover and the lyrics up to half
+     * a song before the listener heard the song (user report
+     * 2026-11-12). The player measures its own lag
+     * (`PlaybackClient.liveStreamLag`); a short gap applies as before,
+     * a real one waits it out. A newer announcement cancels the
+     * waiting one, and a station switch or stop cancels everything —
+     * the identity check at application time is the second line of
+     * defence.
+     */
+    private fun scheduleRadioAnnouncement(nowPlaying: pandoracore.RadioNowPlaying) {
+        radioAnnouncementJob?.cancel()
+        radioAnnouncementJob = null
+        val station = currentRadioStation ?: return
+        val uuid = station.uuid
+        val lag = player.liveStreamLag
+        if (lag > 1.5) {
+            radioAnnouncementJob = intentScope.launch {
+                delay((lag * 1000).toLong())
+                applyRadioAnnouncement(nowPlaying, uuid)
+            }
+        } else {
+            applyRadioAnnouncement(nowPlaying, uuid)
+        }
+    }
+
+    private fun applyRadioAnnouncement(
+        nowPlaying: pandoracore.RadioNowPlaying,
+        stationUUID: String,
+    ) {
+        if (currentRadioStation?.uuid != stationUUID) return
+        radioNowPlaying = nowPlaying
+        radioIdentification = RadioIdentification.identified
+        // The station announced a (new) song — look its cover and
+        // lyrics up on its own, without a tap.
+        identifyRadioSong(nowPlaying, stationUUID)
+    }
+
+    // MARK: The identified radio song (artwork + lyrics)
+
+    /**
+     * Looks the announced song's artwork and lyrics up. Runs
+     * automatically on every announcement, and again from the
+     * Identify button — the retry for a lookup that found nothing.
+     */
+    private fun identifyRadioSong(
+        nowPlaying: pandoracore.RadioNowPlaying,
+        stationUUID: String,
+    ) {
+        radioLookupJob?.cancel()
+        radioSongArtwork = null
+        isIdentifyingRadioSong = true
+
+        // The lyrics provider wants a Track — this synthetic one is
+        // built from the announcement and never reaches the player, so
+        // it can never be rated, scrobbled, bookmarked or recorded; it
+        // only feeds the lyrics path and its cache.
+        val synthetic = radioSongTrack(nowPlaying, stationUUID)
+        loadLyrics(synthetic)
+        // The player's current track is still the stream — the lyrics
+        // panel must answer to the synthetic token while it is up.
+        radioLyricsToken = synthetic.trackToken
+        radioLyricsTrack = synthetic
+
+        val client = songArtworkClient
+        radioLookupJob = intentScope.launch {
+            val artwork = try {
+                client.artwork(
+                    artist = nowPlaying.artist ?: "",
+                    title = nowPlaying.title,
+                )
+            } catch (_: Exception) {
+                null
+            }
+            // A cancelled lookup never touches state.
+            if (!isActive) return@launch
+            isIdentifyingRadioSong = false
+            radioSongArtwork = artwork
+            if (artwork == null) {
+                AppLog.info(
+                    "radio metadata: no trustworthy artwork for \"${nowPlaying.rawTitle}\"",
+                    AppLog.Category.playback,
+                )
+            }
+        }
+    }
+
+    /**
+     * The synthetic track the lyrics provider sees for an announced
+     * song. The token deliberately does not carry the radio prefix —
+     * `Track.isRadio` would make the lyrics loader refuse it — but the
+     * track never reaches the player regardless.
+     */
+    private fun radioSongTrack(
+        nowPlaying: pandoracore.RadioNowPlaying,
+        stationUUID: String,
+    ): Track = Track(
+        trackToken = "radio-song.$stationUUID.${nowPlaying.rawTitle}",
+        title = nowPlaying.title,
+        artist = nowPlaying.artist ?: "",
+        album = "",
+        artworkUrl = "",
+        duration = 0,
+        stationId = stationUUID,
+        variants = emptyList(),
+    )
+
+    /**
+     * `true` when `token` is the track whose lyrics are on screen: the
+     * player's current track — or, while a radio station's identified
+     * song owns the lyrics panel, that song's synthetic token.
+     */
+    private fun isCurrentLyricsToken(token: String): Boolean {
+        val radio = radioLyricsToken ?: return player.currentTrack.value?.trackToken == token
+        return token == radio
+    }
+
+    /**
+     * The track whose lyrics are on screen — `player.currentTrack`,
+     * except while a radio station's identified song owns the panel.
+     */
+    private fun currentLyricsTrack(): Track? = radioLyricsTrack ?: player.currentTrack.value
+
+    /**
+     * The Identify button. With an announcement: retries the song's
+     * lookup (an earlier attempt may have found nothing). Without one:
+     * reconnects the probe — a fresh connection often carries the
+     * current title within the first metadata interval. A station that
+     * truly announces nothing says so beside the LIVE badge.
+     */
+    private fun identifyRadioSongIntent() {
+        val nowPlaying = radioNowPlaying
+        val station = currentRadioStation
+        if (nowPlaying != null && station != null) {
+            identifyRadioSong(nowPlaying, station.uuid)
+        } else if (station != null) {
+            AppLog.info(
+                "radio metadata: identify requested — restarting the probe",
+                AppLog.Category.playback,
+            )
+            startRadioIdentification(station)
+        }
     }
 
     // MARK: Radio favorites (device-local, the Shortwave port)
@@ -1846,6 +2126,7 @@ class AmphoraStore {
             player.stop()
             skipLimitStationId = null
             currentRadioStation = null
+            stopRadioIdentification()
         }
     }
 }

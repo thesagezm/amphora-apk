@@ -121,6 +121,36 @@ player radio surfaces + parity pass.
 
 ## Log
 
+- 2026-11-17 — **A7.4 landed — ICY identification**: `player/RadioMetadataProbe.kt`
+  (port of RadioMetadataProbe.swift: its own connection with
+  `Icy-MetaData: 1`, FORCE_NETWORK; the core ICYMetadataParser fed 4KB
+  chunks; repeat-title dedupe; Listening/Announced/AnnouncesNothing
+  events; readTimeout 20s + callTimeout disabled — the iOS request-20s/
+  resource-24h port; stop() cancels the call so the blocked read
+  unblocks; error *type* logged, never the message — stream URLs must
+  never reach the log) + the store grows RadioIdentification
+  (inactive/identifying/identified/stationAnnouncesNothing) +
+  `radioNowPlaying`/`radioSongArtwork`/`isIdentifyingRadioSong` +
+  startRadioIdentification (main-hop delivery with the station-uuid
+  identity check) / stopRadioIdentification / handleRadioMetadata /
+  scheduleRadioAnnouncement (the live-lag wait: lag > 1.5 s delays
+  apply by `PlaybackClient.liveStreamLag`, newer announcements cancel
+  the waiting one, identity re-checked at application time — the
+  2026-11-12 "lyrics ahead of the audio" fix) / applyRadioAnnouncement /
+  identifyRadioSong (synthetic `radio-song.<uuid>.<rawTitle>` Track —
+  never reaches the player — feeds loadLyrics + its cache; the iTunes
+  artwork lookup via ITunesSongArtworkClient, cancelled-lookup guard) /
+  identifyRadioSongIntent (the Identify button: with announcement =
+  re-lookup, without = probe restart). Lyrics panel ownership follows
+  the synthetic song: isCurrentLyricsToken + currentLyricsTrack now
+  radio-aware; RefreshLyrics/TranslateLyrics dispatch through
+  currentLyricsTrack. Wiring: playRadio starts the probe, stopRadio /
+  play(station) hand-over / record()'s session-dead path stop it.
+  Port delta: OkHttp `Response.use` is not inline, so the read loop
+  checks its own captured Job instead of the suspend `isActive`
+  (documented in the probe). Local gate green: `:core:test` +
+  `:app:assembleDebug`.
+
 - 2026-11-17 — **A7.3 landed — the Radio tab** (`ui/RadioView.kt` +
   `ui/RadioStationArtwork.kt` + `ui/RadioStationFormSheet.kt`, the
   MainTabView Radio slot swapped in): RadioView (port of RadioView.swift:
