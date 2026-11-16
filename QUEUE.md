@@ -14,14 +14,22 @@ before porting any view).
 
 ## Current Milestone
 
-**A5** — feedback / bookmarks / history / sleep timer. User said keep
-moving 2026-11-17 (their message pointed at the A5 breakdown) while they
-test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
-(A4.1–A4.5); its demo checklist is still owed from the user.
+**A5** — feedback / bookmarks / history / sleep timer: **A5.1–A5.6 all
+landed (milestone code-complete)**. User said keep moving 2026-11-17
+(their message pointed at the A5 breakdown) while they test A4 in
+parallel. A4 is code-complete and CI-green (A4.1–A4.5); both demo
+checklists are owed from the user. Per AGENTS.md, A6 does not begin
+until the user confirms A4/A5 on their phone or says keep moving again.
 
 ## Queue (pending, in order)
 
-- **A5.6** — skip-limit UX parity check + A5 polish.
+- **A5 verification (user)**: thumbs up/down on the full player (tap
+  the active one to undo), the player ⋯ menu (Sleep Timer… incl. the
+  live label, Tune Station…, Bookmark Song/Artist → "Song/Artist
+  bookmarked" capsule, Hide This Song → skips ahead), the Home ⏱
+  button → Recents sheet (segment pill, rate a past track, relative
+  times, delete a bookmark), sleep timer pausing at the deadline /
+  end of track, skip-limit badge + "Skip limit reached" row caption.
 - **A4 verification (user)**: install the CI APK artifact (or
   Waydroid once unblocked) and run the demo checklist — launch →
   auto-login → station list → tap a station → audio within ~2s →
@@ -99,6 +107,21 @@ test A4 in parallel; **A5.1 landed**. A4 is code-complete and CI-green
 
 ## Log
 
+- 2026-11-17 — **A5.6 landed — parity verification pass, A5
+  code-complete**: skip-limit surface checked line-for-line against
+  iOS — store (`isSkipLimitReached`/`skipLimitMessage`/
+  `isSkipLimited`/`handleSkipLimit` incl. the "playlist end"/"skip
+  refused" log split) matches; player badge (SKIP LIMIT capsule +
+  secondary message) matches; station-row "Skip limit reached"
+  caption (iOS badgeCaption order: skip limit → Quick mix →
+  Thumbprint) already ported. `liveBadge` is radio-only (A7) — not an
+  A5 gap. Core `PlayHistory.record` parity confirmed (keeps a
+  user-given rating on re-listen; does not seed from `songRating` —
+  iOS identical). Port-delta notes: iOS `rateCurrentTrack`'s
+  currentRadioStation guard is the A7 seam; A8's clearHistory/
+  clearArtworkCache intents belong to Settings (their state layers —
+  history, artwork cache — exist already). No code deltas needed;
+  A5.1–A5.6 complete. Local gate green.
 - 2026-11-17 — **A5.5 landed — RecentsView + the Home toolbar
   button**: `ui/RecentsView.kt` (port of RecentsView.swift: the soft
   capsule segment picker — Recents/Bookmarks, 250ms fill lift; the
