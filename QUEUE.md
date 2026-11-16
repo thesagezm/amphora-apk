@@ -19,12 +19,8 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Queue (pending, in order)
 
-- **A3.3 (next)**: StationsView hero (last-played station card — needs
-  `TransportGlyph` Canvas port) + edit-mode reorder (drag; store
-  `MoveStation` intent already landed in A3.1) + toolbar reorder
-  button.
-- **A3.4**: `AddStationView` + `BrowseStationsSheet` + genre stations
-  + toolbar add button + browse row + empty-state Add button
+- **A3.4 (next)**: `AddStationView` + `BrowseStationsSheet` + genre
+  stations + toolbar add button + browse row + empty-state Add button
   (store: create/createGenre/loadGenres intents).
 - **A3.5**: `TuneStationSheet` + the Tune context item + station
   search (store: search intent; `SessionManager.search` exists).
@@ -44,14 +40,9 @@ CI verdict pending on the handover push — check `gh run list` first).
   test — launch → login screen → wrong password shows the typed error
   copy → real login lands signed-in. Then user phone install via the
   CI APK artifact.
-- **A3** — stations: fetch/list/reorder/create/rename/delete/search/
-  genres, preferences store, mini-tab scaffold.
 - **A4** — playback: Media3 ExoPlayer + `MediaSessionService`, media
   notification, prefetch, mini-player + `NowPlayingView` (the "it
   works" milestone).
-- **A3** — stations UI (iOS `MainTabView` + `StationsView` look).
-- **A4** — playback: ExoPlayer + `MediaSessionService`, media
-  notification, prefetch, mini-player + `NowPlayingView`.
 - **A5** — feedback / bookmarks / history / sleep timer.
 - **A6** — lyrics (lrclib + translation + fallbacks + romanization).
 - **A7** — radio mode (RadioBrowser + ICY probe + live-lag scheduling).
@@ -78,6 +69,19 @@ CI verdict pending on the handover push — check `gh run list` first).
 
 ## Log
 
+- 2026-11-16 — **A3.3 landed**: `ui/TransportGlyph.kt` (full Canvas
+  port of the drawn transport family — play/pause/next/stop/back15
+  with the rounded-polygon quadratic-corner math one-for-one;
+  back15's "15" uses sans-serif-round) + StationsView hero (last-played
+  card, up to 240dp, double shadow incl. the accent glow, 58dp accent
+  play circle with the drawn glyph + Crossfade swap + press dip —
+  play action is A4 wiring; hero is unreachable until A4 populates
+  lastStationId, documented in the header) + edit-mode drag reorder
+  (toolbar SwapVert toggle → trailing DragHandle grip on rows,
+  `detectDragGestures` moves rows one slot at a time through the
+  store's MoveStation intent with finger-tracking offset correction +
+  `animateItem` placement; iOS auto-scroll past the edge is lift-and-
+  repeat here, documented). Local gate green: 372/372 + APK.
 - 2026-11-16 — **A3.2 landed**: `ui/MainTabView.kt` (Home/Radio/
   Settings shell, `RowScope.TabItem` with accent tinting; Radio/
   Settings quiet named shells until A7/A8) + `ui/StationsView.kt`
