@@ -52,6 +52,8 @@ import pandoracore.PandoraTransportError
 import pandoracore.PlaylistError
 import pandoracore.PlayHistory
 import pandoracore.RadioBrowserClient
+import pandoracore.isRadio
+import pandoracore.radioTrack
 import pandoracore.SessionManager
 import pandoracore.SessionManagerError
 import pandoracore.SleepTimer
@@ -310,6 +312,14 @@ class AmphoraStore {
 
     // MARK: Observable state (radio — the Shortwave port)
 
+    /**
+     * The radio station whose live stream is playing (null unless radio
+     * is the current source — starting radio stops Pandora playback and
+     * vice versa, the player is singular).
+     */
+    var currentRadioStation: pandoracore.RadioStation? by mutableStateOf(null)
+        private set
+
     /** Starred radio stations, device-local (Shortwave's favorites). */
     var radioFavorites: List<pandoracore.RadioStation> by mutableStateOf(emptyList())
         private set
@@ -414,6 +424,8 @@ class AmphoraStore {
                 loadLyrics(player.currentTrack.value, force = true)
             is Intent.TranslateLyrics ->
                 requestTranslation(player.currentTrack.value, manual = true)
+            is Intent.PlayRadioStation -> playRadio(intent.station)
+            is Intent.StopRadio -> stopRadio()
             is Intent.ToggleRadioFavorite ->
                 toggleRadioFavorite(intent.station)
             is Intent.RemoveRadioRecent -> {
@@ -474,6 +486,8 @@ class AmphoraStore {
         ) : Intent()
         data object RefreshLyrics : Intent()
         data object TranslateLyrics : Intent()
+        data class PlayRadioStation(val station: pandoracore.RadioStation) : Intent()
+        data object StopRadio : Intent()
         data class ToggleRadioFavorite(val station: pandoracore.RadioStation) : Intent()
         data class RemoveRadioRecent(val station: pandoracore.RadioStation) : Intent()
         data object ClearRadioRecents : Intent()
@@ -545,11 +559,10 @@ class AmphoraStore {
             currentFeedbackId = null
             currentRating = feedbackRatingFor(track?.rating)
             // Record the play in the local history (ads are not songs,
-            // and neither is a live radio stream — the radio guard
-            // arrives with A7). The station token rides along so the
-            // Recents list can rate the track later — the rating
-            // belongs to that station.
-            if (track != null && !track.isAdvertisement) {
+            // and neither is a live radio stream). The station token
+            // rides along so the Recents list can rate the track later
+            // — the rating belongs to that station.
+            if (track != null && !track.isAdvertisement && !track.isRadio) {
                 history = history.copy().also {
                     it.record(track, currentStation?.token)
                 }
@@ -917,8 +930,13 @@ class AmphoraStore {
                 return
             }
             currentStation = station
-            // The player is singular. (iOS clears the radio hand-over
-            // state here; radio arrives with A7.)
+            // The player is singular: a Pandora station takes the player
+            // over from a radio stream. Leaving `currentRadioStation`
+            // set would keep the radio row marked as playing and make
+            // "next" stop the (already stopped) radio stream instead of
+            // skipping the Pandora track. (The probe stop lands with
+            // A7.4's identification wiring.)
+            currentRadioStation = null
             // A different station invalidates the cached listening modes.
             stationModes = null
             modesStationId = null
@@ -1014,12 +1032,17 @@ class AmphoraStore {
     }
 
     /** Skip to the next track (user intent). pydora: "Cannot skip
-     *  advertisements" — the impression plays out. (The radio stop-over
-     *  arrives with A7.) */
+     *  advertisements" — the impression plays out. Radio has no next
+     *  track — "next" stops the stream (the store's guard; the player
+     *  sees no radio-specific case). */
     private fun skipToNext() {
         if (player.currentTrack.value?.isAdvertisement == true) {
             AppLog.info("skip requested during an ad — refused", AppLog.Category.playback)
             lastErrorMessage = "Advertisements can't be skipped."
+            return
+        }
+        if (currentRadioStation != null) {
+            stopRadio()
             return
         }
         player.skipToNext()
@@ -1133,8 +1156,11 @@ class AmphoraStore {
         translationJob = null
         romanizationJob?.cancel()
         romanizationJob = null
-        if (track == null || track.isAdvertisement) {
-            // (iOS also guards `!track.isRadio` here — A7.)
+        if (track == null || track.isAdvertisement || track.isRadio) {
+            // A live radio stream has no song behind it (an identified
+            // radio song loads its lyrics through its own synthetic
+            // track — A7.4); the guard clears any state from a Pandora
+            // track.
             lyrics = null
             isLoadingLyrics = false
             lyricsTranslationState = LyricsTranslationState.None
@@ -1367,6 +1393,70 @@ class AmphoraStore {
         }
     }
 
+    // MARK: Radio playback (the port of AppStore's Radio section)
+
+    /**
+     * Plays one directory station's live stream. Tapping the station
+     * that is already playing toggles playback instead of restarting.
+     * Starting radio stops Pandora playback and vice versa — the
+     * player is singular.
+     *
+     * Port delta: iOS's onTrackChanged observer carries a "radio station
+     * lost its player slot" guard because a remote-command skip can
+     * empty a single-item AVQueuePlayer silently; on Android every
+     * queue-empty path already reports the nil transition through
+     * PlaybackClient, and stopRadio clears the station itself, so the
+     * guard has nothing left to catch here.
+     */
+    private fun playRadio(station: pandoracore.RadioStation) {
+        if (currentRadioStation?.uuid == station.uuid &&
+            player.currentTrack.value != null
+        ) {
+            player.togglePlayback()
+            return
+        }
+        AppLog.info("radio: playing \"${station.name}\"", AppLog.Category.playback)
+        currentRadioStation = station
+        currentStation = null
+        queuedTrackTokens = mutableSetOf()
+        prefetchRetryAttempts = 0
+        prefetchRetryJob?.cancel()
+        stationModes = null
+        modesStationId = null
+        recordRadioRecent(station)
+        player.playLiveStream(track = radioTrack(station))
+        // Listen along for the station's now-playing announcements (the
+        // probe holds its own read-only connection) — the identification
+        // wiring lands with A7.4 (RadioMetadataProbe).
+        // Directory click counter (Shortwave parity) — best-effort,
+        // never blocks playback. Custom stations aren't in the
+        // directory, so there is nothing to count.
+        if (!isRadioCustom(station)) {
+            val uuid = station.uuid
+            intentScope.launch { radioClient.registerClick(uuid) }
+        }
+    }
+
+    /** Stops radio playback and forgets the station. (The probe stop
+     *  lands with A7.4's identification wiring.) */
+    private fun stopRadio() {
+        if (currentRadioStation == null) return
+        AppLog.info("radio: stopped", AppLog.Category.playback)
+        currentRadioStation = null
+        lyrics = null
+        player.stop()
+    }
+
+    /** Moves a station to the top of the recents list (deduped), keeping
+     *  the list bounded like Shortwave's. */
+    private fun recordRadioRecent(station: pandoracore.RadioStation) {
+        radioRecents = listOf(station) + radioRecents.filterNot { it.uuid == station.uuid }
+        if (radioRecents.size > 20) {
+            radioRecents = radioRecents.dropLast(radioRecents.size - 20)
+        }
+        updatePreferences { it.copy(radioRecents = radioRecents) }
+    }
+
     // MARK: Radio favorites (device-local, the Shortwave port)
 
     /** Stars or unstars a station (device-local favorites). */
@@ -1413,8 +1503,9 @@ class AmphoraStore {
 
     /**
      * Applies a form edit: same uuid, new name/URL. The user's other
-     * lists follow the new identity (the playing snapshot follows it
-     * too — that line lands with A7.2's `currentRadioStation`).
+     * lists and the playing snapshot follow the new identity (the
+     * stream keeps playing until restarted — a restart picks the new
+     * URL).
      */
     private fun updateRadioCustomStation(
         station: pandoracore.RadioStation,
@@ -1433,13 +1524,16 @@ class AmphoraStore {
             radioRecents = radioRecents.map { if (it.uuid == updated.uuid) updated else it }
             updatePreferences { it.copy(radioRecents = radioRecents) }
         }
+        if (currentRadioStation?.uuid == updated.uuid) {
+            currentRadioStation = updated
+        }
         updatePreferences { it.copy(radioCustomStations = radioCustomStations) }
     }
 
     /**
      * Deletes a custom station everywhere: the list, favorites and
-     * recents (it is gone, so stale entries would 404), and playback if
-     * it was the one playing (that stop lands with A7.2's `stopRadio`).
+     * recents (it is gone, so stale entries would 404), and playback
+     * if it was the one playing.
      */
     private fun deleteRadioCustomStation(station: pandoracore.RadioStation) {
         radioCustomStations = radioCustomStations.filterNot { it.uuid == station.uuid }
@@ -1451,6 +1545,9 @@ class AmphoraStore {
         if (radioRecents.any { it.uuid == station.uuid }) {
             radioRecents = radioRecents.filterNot { it.uuid == station.uuid }
             updatePreferences { it.copy(radioRecents = radioRecents) }
+        }
+        if (currentRadioStation?.uuid == station.uuid) {
+            stopRadio()
         }
     }
 
@@ -1465,9 +1562,9 @@ class AmphoraStore {
     private suspend fun rateCurrentTrack(rating: FeedbackRating) {
         val track = player.currentTrack.value ?: return
         if (rating == FeedbackRating.none) return
-        // Ads are not songs — nothing to rate. (The radio guard arrives
-        // with A7: a live stream is not a song either.)
-        if (track.isAdvertisement) return
+        // Ads are not songs, and neither is a live radio stream (the
+        // synthetic `radio.<uuid>` token) — nothing to rate.
+        if (track.isAdvertisement || track.isRadio) return
         val station = currentStation ?: return
         lastErrorMessage = null
         try {
@@ -1744,10 +1841,11 @@ class AmphoraStore {
             lastErrorMessage = "Your Pandora session ended. Sign in again."
             authPhase = AuthPhase.signedOut
             // The player must not keep a dead session's audio running
-            // (the iOS signOut path stops the player and clears the
-            // skip-limit mark; the radio clear arrives with A7).
+            // (the iOS signOut path stops the player, clears the
+            // skip-limit mark and forgets the radio station).
             player.stop()
             skipLimitStationId = null
+            currentRadioStation = null
         }
     }
 }

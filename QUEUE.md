@@ -121,6 +121,30 @@ player radio surfaces + parity pass.
 
 ## Log
 
+- 2026-11-17 — **A7.2 landed — radio playback wiring**: `PlaybackClient`
+  grows `playLiveStream(track)` (one slot, no prefetch, duration 0 —
+  the scrubber reads it as live; the A4 clear-fires-null contract kept,
+  the radio item's own transition adopts the stream) +
+  `liveStreamLag` (bufferedPosition − currentPosition, 0 when not
+  meaningful, capped 45 s — the iOS loadedTimeRanges port, delta
+  documented) + the store: `currentRadioStation` state, intents
+  PlayRadioStation/StopRadio, `playRadio` (toggle-on-same; clears the
+  Pandora hand-over — currentStation/queuedTrackTokens/prefetch retry/
+  stationModes; recordRadioRecent; playLiveStream; the click-ping via
+  registerClick skipped for custom stations) + `stopRadio` (forgets the
+  station, clears lyrics, player.stop) + `recordRadioRecent` (dedupe →
+  top → 20-cap) + the A7.1 seams completed (update/delete custom
+  station follow the playing snapshot; delete stops playback) + the
+  radio guards: play(station) clears currentRadioStation (the player
+  is singular), skipToNext stops the stream, history record +
+  rateCurrentTrack + loadLyrics skip `isRadio` tracks, record()'s
+  session-dead path clears the radio station. Port delta: iOS's
+  "lost player slot" guard has no Android counterpart (every queue-
+  empty path reports the nil transition; documented in playRadio's
+  header). Identification (probe + announcements + lag scheduling) is
+  A7.4 — explicitly scoped. Local gate green: `:core:test` +
+  `:app:assembleDebug`.
+
 - 2026-11-17 — **A7.1 landed — RadioController + the store's radio
   data layer** (user said "start from A7"): `store/RadioController.kt`
   (port of RadioController.swift: the Mode sealed class —

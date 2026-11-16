@@ -110,6 +110,32 @@ class PlaybackClient(private val context: Context) {
     val isPlaying: Boolean
         get() = _state.value == PlaybackState.playing || _state.value == PlaybackState.buffering
 
+    /**
+     * How far the audible audio lags a live stream's edge, in seconds.
+     *
+     * The radio identification probe reads the station's metadata at
+     * the stream's live edge; the player deliberately buffers behind
+     * that edge (the 30 s forward-buffer tuning), so an announcement
+     * describes a song the listener hears seconds later. The gap is
+     * the buffered-ahead window: the buffered range's end (the download
+     * edge) minus the playback position. 0 when the measurement is not
+     * meaningful (nothing loaded yet, a finite track, a stalled read) —
+     * callers treat 0 as "apply now".
+     *
+     * Port delta: iOS reads `loadedTimeRanges.first` — ExoPlayer's
+     * equivalent window is `bufferedPosition`.
+     */
+    val liveStreamLag: Double
+        get() {
+            val controller = connected ?: return 0.0
+            val bufferedMs = controller.bufferedPosition
+            val positionMs = controller.currentPosition
+            if (bufferedMs == C.TIME_UNSET || positionMs == C.TIME_UNSET) return 0.0
+            val lag = (bufferedMs - positionMs) / 1000.0
+            if (!lag.isFinite() || lag <= 0.0) return 0.0
+            return minOf(lag, 45.0)
+        }
+
     // MARK: Callbacks (set by the owner — the observer-list ports)
 
     /**
@@ -260,6 +286,44 @@ class PlaybackClient(private val context: Context) {
         _duration.value = track.duration.toDouble()
         // currentTrack / state / needMore arrive via the session's
         // transition and timeline events.
+    }
+
+    /**
+     * Starts a live radio stream: one slot, nothing behind it — there
+     * is no "next" to prefetch, and the track's duration is 0 (the
+     * scrubber reads it as live and disables itself).
+     *
+     * Port delta: iOS's resetQueue never reports the outgoing track as
+     * nil here; the port keeps the A4 contract instead — the
+     * clearMediaItems fires the item-null transition (the outgoing
+     * track is reported), and the single radio item's own transition
+     * adopts the stream as the current track.
+     */
+    fun playLiveStream(track: Track) = withController { controller ->
+        // Dropping the playlist fires the item-null transition, which is
+        // where the outgoing track is reported (finishOutgoingTrack).
+        controller.clearMediaItems()
+        controller.stop()
+        val item = mediaItem(track)
+        if (item == null) {
+            // The queue was emptied for the switch, so nothing is
+            // playing any more — the current track must not keep
+            // pointing at the track that was replaced.
+            _errorMessage.value = null
+            _currentTrack.value = null
+            onTrackChanged.forEach { it(null) }
+            fail("That stream isn't playable right now.")
+            return@withController
+        }
+        tracksByToken[track.trackToken] = track
+        _errorMessage.value = null
+        controller.addMediaItems(listOf(item))
+        controller.prepare()
+        controller.play()
+        _elapsed.value = 0.0
+        _duration.value = 0.0
+        // currentTrack / state arrive via the session's transition
+        // events (the `play` contract).
     }
 
     /**
