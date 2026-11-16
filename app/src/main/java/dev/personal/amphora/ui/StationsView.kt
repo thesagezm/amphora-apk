@@ -11,14 +11,12 @@
 //  - browse row + Add Station flow: A3.4
 //  - the "Tune Station…" context item + TuneStationSheet: A3.5
 //  - recents toolbar button: A5
-//  - row taps start playback: A4 wiring (`.playStation`) — until then
-//    rows carry the long-press context menu only, so no dead tap
-//    pretends to play.
 //
-//  The hero renders only when a last-played station exists — A4
-//  populates `preferences.lastStationId`, so until then the hero (and
-//  its play control) is unreachable, and its play action is wired in
-//  that same unit.
+//  A4.3 wired the play surface: row taps + the hero play button send
+//  `.playStation` (the store turns a tap on the playing station into a
+//  pause), and the long-press context menu now actually opens — iOS's
+//  Button + `.contextMenu` ports to one `RowPressableButton` with an
+//  `onLongClick`.
 //
 //  Drag reorder (edit mode): the toolbar toggle shows a trailing grip
 //  on each row; dragging it moves rows one slot at a time — the port
@@ -112,6 +110,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import dev.personal.amphora.store.AmphoraStore
+import dev.personal.amphora.support.rememberHaptics
 import pandoracore.Station
 
 @Composable
@@ -524,10 +523,10 @@ private fun ReorderableStationRow(
 
 /**
  * One row: card surface, artwork, name, badge caption for the
- * non-plain cases, context menu. iOS wraps the row in
- * `RowPressableButtonStyle` with the play intent — that intent is A4
- * wiring, so the press wrapper joins then; the long-press menu works
- * today.
+ * non-plain cases, context menu. iOS wraps the row in a Button with
+ * `RowPressableButtonStyle` (tap = play that station) and a
+ * `.contextMenu` (long-press = Tune/Rename/Delete) — the same two
+ * gestures on one card here.
  */
 @Composable
 private fun StationListRow(
@@ -542,10 +541,18 @@ private fun StationListRow(
     onTune: (Station) -> Unit,
 ) {
     val theme = Theme.tokens()
+    val haptics = rememberHaptics()
     val isCurrent = store.currentStation?.id == station.id
     var menuOpen by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.amphoraCardRow(theme, tinted = isCurrent)) {
+    RowPressableButton(
+        onClick = {
+            haptics.light()
+            store.send(AmphoraStore.Intent.PlayStation(station))
+        },
+        onLongClick = { menuOpen = true },
+        modifier = Modifier.amphoraCardRow(theme, tinted = isCurrent),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -819,12 +826,13 @@ private fun BrowseRow(onOpen: () -> Unit) {
 /**
  * The last-played (or playing) station, large and centered — the
  * landing page's centerpiece. Hidden until something has played.
- * (iOS wraps it in `PressableButtonStyle` + a snappy glyph swap; the
- * play action itself is A4 wiring.)
+ * iOS wraps the play control in `PressableButtonStyle` + a snappy
+ * glyph swap; the press dip and the Crossfade swap are below.
  */
 @Composable
 private fun Hero(store: AmphoraStore) {
     val theme = Theme.tokens()
+    val haptics = rememberHaptics()
     val station = store.featuredStation ?: return
     val isPlaying = store.currentStation?.id == station.id && store.isPlayingCurrentStation
 
@@ -876,13 +884,26 @@ private fun Hero(store: AmphoraStore) {
             color = secondaryColor(theme),
         )
         Spacer(modifier = Modifier.height(16.dp))
-        HeroPlayButton(isPlaying = isPlaying)
+        HeroPlayButton(
+            isPlaying = isPlaying,
+            stationName = station.name,
+            onToggle = {
+                haptics.light()
+                store.send(AmphoraStore.Intent.PlayStation(station))
+            },
+        )
     }
 }
 
-/** The 58dp accent circle with the drawn play/pause glyph. */
+/** The 58dp accent circle with the drawn play/pause glyph. The tap
+ *  sends the same `.playStation` intent as a row tap — the store's
+ *  play() turns it into a pause when this station is already playing. */
 @Composable
-private fun HeroPlayButton(isPlaying: Boolean) {
+private fun HeroPlayButton(
+    isPlaying: Boolean,
+    stationName: String,
+    onToggle: () -> Unit,
+) {
     val theme = Theme.tokens()
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -915,10 +936,12 @@ private fun HeroPlayButton(isPlaying: Boolean) {
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                // A4 wires `.playStation` — the hero only renders once a
-                // station has played, which only A4's play path records.
-                onClick = {},
-            ),
+                onClick = onToggle,
+            )
+            .semantics {
+                contentDescription =
+                    if (isPlaying) "Pause $stationName" else "Play $stationName"
+            },
         contentAlignment = Alignment.Center,
     ) {
         Crossfade(

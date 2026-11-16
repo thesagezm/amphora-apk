@@ -16,20 +16,18 @@ before porting any view).
 
 **A4** — playback (the "it works" milestone). User said keep moving
 2026-11-16 while they test A3 on their phone in parallel. **A4.1 +
-A4.2 landed** (player infrastructure + store playback surface);
-A4.3 next.
+A4.2 + A4.3 landed**; A4.4 next (the player UI: slot + MiniPlayer +
+NowPlayingView land together so no card tap is dead).
 
 ## Queue (pending, in order)
 
-- **A4.3 — stations wiring + MiniPlayer**: StationsView row taps +
-  hero play button call `.playStation`, playing-row glyph off
-  `isPlayingCurrentStation` + quickmix row behavior; MainTabView
-  grows the mini-player slot + NowPlayingView sheet host;
-  `ui/MiniPlayer.kt` port (progress hairline, toggle/skip, caption;
-  AirPlay route picker → out of scope, system output switching per
-  AGENTS.md deprioritization).
-- **A4.4 — NowPlayingView + PlayerScrubber**: read the SwiftUI files
-  first, port view-for-view minus FeedbackBar (thumbs are A5); shows
+- **A4.4 — player UI**: MainTabView mini-player slot + the
+  NowPlayingView sheet host (one `ModalBottomSheet` for the whole
+  shell, iOS owns the sheet in MainTabView too); `ui/MiniPlayer.kt`
+  port (progress hairline, toggle/skip, caption; AirPlay route
+  picker → out of scope per AGENTS.md deprioritization) +
+  `ui/NowPlayingView.kt` + `ui/PlayerScrubber.kt` ports, view-for-view
+  from the SwiftUI files, minus FeedbackBar (thumbs are A5); shows
   the skip-limit message + "Tuned to …" confirmation toast surfaces
   (both landed in the store).
 - **A4.5 — robustness pass**: error states, session-expiry during
@@ -87,6 +85,16 @@ A4.3 next.
 
 ## Log
 
+- 2026-11-16 — **A4.3 landed — the play surface lights up**:
+  StationsView rows send `.playStation` (iOS Button+contextMenu →
+  `RowPressableButton` with onClick play + onLongClick menu — which
+  also FIXED a latent A3 gap: `menuOpen` was never set true, the
+  long-press menu had no opener; noted in the A3.2 log claim) +
+  `rememberHaptics().light()` on taps (the port of Haptics.light()) +
+  hero play button now sends `.playStation` with the accessibility
+  label "Play/Pause <station>" (iOS had it; the A3 port omitted it —
+  the store's play() turns the tap on the playing station into a
+  pause). Local gate green: `:core:test` + `:app:assembleDebug`.
 - 2026-11-16 — **A4.2 landed — store playback surface** (port of
   AppStore's Playback section): store owns `val player` (PlaybackClient);
   intents PlayStation/TogglePlayback/SkipToNext/SetPlaybackVolume;
