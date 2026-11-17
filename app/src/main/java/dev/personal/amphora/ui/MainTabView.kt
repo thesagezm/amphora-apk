@@ -18,8 +18,9 @@
 //    the last row is always reachable.
 //  - The NowPlayingView sheet is one ModalBottomSheet at this level
 //    (iOS: one `.sheet` on the TabView).
-//  - The Settings tab content is its own milestone (A8) and shows a
-//    quiet empty shell until then; Radio landed with A7.3.
+//  - All three tab contents are live: Home (A3), Radio (A7.3),
+//    Settings (A8.2). QuietTabPlaceholder is gone with the last
+//    milestone that needed it.
 //  - SF Symbols map to the closest Material glyphs (music.note.house →
 //    Home, antenna.radiowaves… → Radio, gearshape → Settings).
 //
@@ -81,7 +82,7 @@ fun MainTabView(store: AmphoraStore) {
             when (selectedTab) {
                 TAB_HOME -> StationsView(store)
                 TAB_RADIO -> RadioView(store)
-                else -> QuietTabPlaceholder("Settings", Icons.Rounded.Settings)
+                TAB_SETTINGS -> SettingsView(store)
             }
         }
         if (currentTrack != null) {

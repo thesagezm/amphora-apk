@@ -26,6 +26,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
+import kotlinx.serialization.encodeToString
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -200,13 +201,90 @@ data class ThemeSelection(
 )
 
 /**
- * Holds the live selection. The iOS `ThemeController` resolves `.system`
- * against the device's light/dark setting; the same resolution happens
- * here through `isSystemInDarkTheme()` at composition time. The full
- * controller (persisted selection, settings UI) ports in A8.
+ * Holds the live selection and persists it. The iOS `ThemeController`
+ * resolves `.system` against the device's light/dark setting; the same
+ * resolution happens here through `isSystemInDarkTheme()` at
+ * composition time, so the controller carries no `systemIsLight` — the
+ * root view has nothing to record.
+ *
+ * The theme lives in its own file (`theme.json`, the port of
+ * ThemeDiskStore), deliberately outside `Preferences` — `AmphoraStore`
+ * round-trips the whole `Preferences` struct on every save, so a second
+ * writer there would clobber whichever saved last. Fail-closed to the
+ * defaults on any read/decode problem; best-effort atomic writes.
  */
 object ThemeController {
-    var selection by mutableStateOf(ThemeSelection())
+
+    var selection by mutableStateOf(loadSelection())
+        private set
+
+    fun setAppearance(appearance: ThemeAppearance) {
+        if (selection.appearance == appearance) return
+        selection = selection.copy(appearance = appearance)
+        saveSelection(selection)
+    }
+
+    fun setAccent(accent: ThemeAccent) {
+        if (selection.accent == accent) return
+        selection = selection.copy(accent = accent)
+        saveSelection(selection)
+    }
+
+    // MARK: Internals (theme.json in filesDir)
+
+    private const val FILE_NAME = "theme.json"
+
+    private val json = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class Stored(val appearance: String, val accent: String)
+
+    private fun themeFile(): java.io.File =
+        java.io.File(
+            dev.personal.amphora.AmphoraContextProvider.context.filesDir,
+            FILE_NAME,
+        )
+
+    private fun loadSelection(): ThemeSelection {
+        val stored = try {
+            json.decodeFromString<Stored>(themeFile().readText())
+        } catch (_: Exception) {
+            return ThemeSelection()
+        }
+        var selection = ThemeSelection()
+        ThemeAppearance.entries.firstOrNull { it.name == stored.appearance }?.let {
+            selection = selection.copy(appearance = it)
+        }
+        ThemeAccent.entries.firstOrNull { it.name == stored.accent }?.let {
+            selection = selection.copy(accent = it)
+        }
+        return selection
+    }
+
+    private fun saveSelection(selection: ThemeSelection) {
+        val data = try {
+            json.encodeToString(
+                Stored(appearance = selection.appearance.name, accent = selection.accent.name),
+            )
+        } catch (_: Exception) {
+            return
+        }
+        try {
+            val file = themeFile()
+            file.parentFile?.mkdirs()
+            val temp = java.io.File(file.parentFile, "$FILE_NAME.tmp")
+            temp.writeText(data)
+            if (!temp.renameTo(file)) {
+                file.writeText(data)
+                temp.delete()
+            }
+        } catch (_: Exception) {
+            // Best-effort — the next save retries.
+        }
+    }
 }
 
 // MARK: Live tokens

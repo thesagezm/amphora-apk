@@ -1019,7 +1019,7 @@ private fun AccentTile(icon: ImageVector) {
 /** A pushed screen's header: back arrow + inline title (the port of
  *  the NavigationStack navigation bar). */
 @Composable
-private fun PushedHeader(title: String, onBack: () -> Unit) {
+internal fun PushedHeader(title: String, onBack: () -> Unit) {
     val theme = Theme.tokens()
     Row(
         modifier = Modifier

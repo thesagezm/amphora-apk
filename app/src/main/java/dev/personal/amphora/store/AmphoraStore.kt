@@ -17,6 +17,7 @@ package dev.personal.amphora.store
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import coil3.SingletonImageLoader
 import dev.personal.amphora.AmphoraContextProvider
 import dev.personal.amphora.persistence.HistoryStore
 import dev.personal.amphora.persistence.Preferences
@@ -40,6 +41,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import pandoracore.Bookmark
 import pandoracore.FeedbackRating
@@ -533,6 +535,9 @@ class AmphoraStore {
                 scrobbler.isEnabled = intent.enabled
                 updatePreferences { it.copy(scrobblingEnabled = intent.enabled) }
             }
+            is Intent.SignOutPandora -> signOut()
+            is Intent.ClearHistory -> clearHistory()
+            is Intent.ClearArtworkCache -> launchIntent { clearArtworkCache() }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -596,6 +601,12 @@ class AmphoraStore {
         data class AuthenticateLastFm(val username: String, val password: String) : Intent()
         data object SignOutLastFm : Intent()
         data class SetScrobblingEnabled(val enabled: Boolean) : Intent()
+        data object SignOutPandora : Intent()
+        /** Wipe the local play history (device-local; Pandora's own
+         *  listening data is untouched). */
+        data object ClearHistory : Intent()
+        /** Empty the artwork cache (memory + disk) and refresh its size. */
+        data object ClearArtworkCache : Intent()
         data object DismissError : Intent()
     }
 
@@ -1882,6 +1893,90 @@ class AmphoraStore {
         }
         if (currentRadioStation?.uuid == station.uuid) {
             stopRadio()
+        }
+    }
+
+    // MARK: Sign out
+
+    /**
+     * Ends the Pandora session: playback stops, the stored session and
+     * all session-scoped state clear, and the app returns to sign-in.
+     * Local history stays (it is device data, not session data).
+     */
+    private fun signOut() {
+        AppLog.info("signing out of Pandora")
+        player.stop()
+        intentScope.launch { session.signOut() }
+        authPhase = AuthPhase.signedOut
+        stations = emptyList()
+        bookmarks = emptyList()
+        genreCategories = null
+        currentStation = null
+        currentRadioStation = null
+        stopRadioIdentification()
+        stationModes = null
+        skipLimitStationId = null
+        isExplicitContentFilterEnabled = false
+        modesStationId = null
+        lyrics = null
+        lyricsTranslationState = LyricsTranslationState.None
+        lyricsCache.clear()
+        queuedTrackTokens.clear()
+        lastErrorMessage = null
+        confirmationMessage = null
+    }
+
+    // MARK: Local data (Settings → Library)
+
+    /** The artwork cache's size on disk — the Settings row shows it so
+     *  the user knows what clearing it would reclaim. */
+    var artworkCacheBytes: Long by mutableStateOf(0L)
+        private set
+
+    /**
+     * Wipes the local play history. This is device-local data:
+     * Pandora's own listening history and the account are untouched,
+     * and the Recents list simply starts empty again.
+     */
+    private fun clearHistory() {
+        history = PlayHistory()
+        historyStore.save(history)
+        AppLog.info("play history cleared", AppLog.Category.app)
+    }
+
+    /**
+     * Empties the artwork cache (both tiers) and refreshes the size the
+     * Settings row shows. Artwork is re-downloaded the next time a
+     * screen shows it.
+     *
+     * Port delta: iOS empties `ArtworkCache.shared`; the port's shared
+     * Coil loader owns both tiers (the A4 decision), so its memory +
+     * disk caches clear here.
+     */
+    private suspend fun clearArtworkCache() {
+        withContext(Dispatchers.IO) {
+            try {
+                val loader = SingletonImageLoader.get(AmphoraContextProvider.context)
+                loader.memoryCache?.clear()
+                loader.diskCache?.clear()
+            } catch (error: Exception) {
+                AppLog.error("artwork cache clear failed: $error", AppLog.Category.artwork)
+            }
+        }
+        refreshArtworkCacheSize()
+    }
+
+    /** Reads the artwork cache's size on disk (the Settings screen's
+     *  on-appear refresh — iOS `.task`). */
+    fun refreshArtworkCacheSize() {
+        intentScope.launch {
+            artworkCacheBytes = withContext(Dispatchers.IO) {
+                try {
+                    SingletonImageLoader.get(AmphoraContextProvider.context).diskCache?.size ?: 0L
+                } catch (_: Exception) {
+                    0L
+                }
+            }
         }
     }
 

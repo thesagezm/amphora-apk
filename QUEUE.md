@@ -129,6 +129,37 @@ pass. Phone verification of A4–A7 still owed below.
 
 ## Log
 
+- 2026-11-17 — **A8.2 landed — the Settings tab + themes persistence +
+  the About/Diagnostics screens**: `ThemeController` grows the port of
+  Store/ThemeController.swift (theme.json in filesDir — the same
+  "outside Preferences" separation iOS chose; setAppearance/setAccent
+  with the guard-then-save semantics; fail-closed load, atomic writes;
+  no systemIsLight — the resolution runs through isSystemInDarkTheme()
+  in tokens() as before) + the store grows intents SignOutPandora
+  (the full iOS signOut port — player stop, session.signOut async,
+  every session-scoped state cleared, local history stays) /
+  ClearHistory / ClearArtworkCache (Coil memory+disk tiers, the A4
+  decision documented) + `artworkCacheBytes` +
+  refreshArtworkCacheSize (IO-dispatched) + `ui/SettingsView.kt` (all
+  seven iOS sections: Appearance — the background dropdown + the five
+  accent swatches with the ring/checkmark; Last.fm — the signed-in
+  rows (Switch, signed-in-as, the activity line yellow/secondary,
+  Open Last.fm Profile via LocalUriHandler, destructive sign-out) and
+  the credentials rows (username/password fields with clearAuthError
+  on edits, Connect with spinner, the auth error); Account — the
+  explicit-content row; Library — clear history (disabled when empty,
+  "N plays") + clear cache (byte summary) with the two dialogs;
+  Support/About — push rows; the destructive sign-out row) +
+  `ui/DiagnosticsView.kt` (device summary + log sections, Copy (2 s
+  checkmark) / Share (ACTION_SEND chooser), the nothing-recorded
+  state; the crash section fills in A8.3 with CrashReporter — its
+  absence is invisible per the iOS render condition) + `ui/AboutView.kt`
+  (brand-gradient circle intro, the six acknowledgements, the version
+  row) + the MainTabView Settings slot swapped in — all three tabs
+  live now. SF-symbol ports: e.square→Explicit, stethoscope→BugReport,
+  doc.on.doc→ContentCopy. Local gate green: `:core:test` +
+  `:app:assembleDebug`.
+
 - 2026-11-17 — **A8.1 landed — the Scrobbler + Last.fm secrets**:
   `pandora/KeystoreSecretStore.kt` (the generic Keychain-secret port —
   account-scoped AES-GCM seal file, one Keystore key for the app's
