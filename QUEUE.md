@@ -14,15 +14,13 @@ before porting any view).
 
 ## Current Milestone
 
-**A7** — radio mode: **A7.1–A7.5 landed (milestone code-complete)**.
-User directive 2026-11-17: "start from A7". The full surface is in:
-RadioView (hero/recents/favorites/custom/discover/search/results +
-paging), custom-station form, playback (live streams through the same
-player, next = stop), favorites/recents persistence, the ICY probe with
-lag-scheduled announcements, identified-song artwork + lyrics, and the
-player radio surfaces (LIVE badge, identify status, stop glyph).
-Next: **A8** — Last.fm scrobbling + Settings + Diagnostics + themes +
-crash handler — after CI green here, or on the user's next keep-moving.
+**A8** — Last.fm scrobbling + Settings + Diagnostics + themes + crash
+handler. User directive 2026-11-17: "continue" (the keep-moving
+instruction after A7's code-complete). A7 landed code-complete and
+CI-green before it (A7.1–A7.5, every run green). Unit plan: A8.1
+Scrobbler + Last.fm secrets → A8.2 SettingsView + themes persistence →
+A8.3 Diagnostics + CrashReporter + log mirror → A8.4 About + parity
+pass. Phone verification of A4–A7 still owed below.
 
 ## Queue (pending, in order)
 
@@ -130,6 +128,28 @@ crash handler — after CI green here, or on the user's next keep-moving.
   `Amphora/UI/*` for every view's design).
 
 ## Log
+
+- 2026-11-17 — **A8.1 landed — the Scrobbler + Last.fm secrets**:
+  `pandora/KeystoreSecretStore.kt` (the generic Keychain-secret port —
+  account-scoped AES-GCM seal file, one Keystore key for the app's
+  secrets, opaque payload per account) + `player/Scrobbler.kt` (port of
+  Scrobbler.swift verbatim semantics: AuthState signedOut/signedIn/
+  needsAuth; authenticate → Keystore seal + auto-enable + onEnabledChanged
+  persistence hook; signOut; clearAuthError on field edits; nowPlaying
+  at track start; scrobbleIfEarned through the core ScrobblePolicy —
+  30 s floor, half-or-240 s rule; the error handler's session-ended
+  path for invalidSessionKey AND invalidCredentials (the 2026-11-12
+  dead-key-as-error-4 report); the exact Settings status-line copy;
+  failures never disturb playback) + the store wiring: `val scrobbler`
+  (account `lastfm.session`), enable flag seeded from preferences +
+  every scrobbler flip persisted, intents AuthenticateLastFm/
+  SignOutLastFm/SetScrobblingEnabled, `trackStartedAt` set in
+  onTrackChanged (non-radio only) + the onTrackFinished observer
+  scrobbling with it (radio excluded both sides; ads excluded by the
+  policy). Port delta: the "rule not met" log line is info (AppLog has
+  no debug level yet — lands with A8.3's mirror). Timestamp Long per
+  the core's scrobble signature. Local gate green: `:core:test` +
+  `:app:assembleDebug`.
 
 - 2026-11-17 — **A7.5 landed — the player's radio surfaces + the
   milestone parity pass, A7 code-complete**: NowPlayingView (port of

@@ -28,9 +28,11 @@ import dev.personal.amphora.pandora.OkHttpLastFmTransport
 import dev.personal.amphora.pandora.OkHttpModesTransport
 import dev.personal.amphora.pandora.OkHttpPandoraTransport
 import dev.personal.amphora.pandora.OkHttpRadioBrowserTransport
+import dev.personal.amphora.pandora.KeystoreSecretStore
 import dev.personal.amphora.player.PlaybackClient
 import dev.personal.amphora.player.PlaybackState
 import dev.personal.amphora.player.RadioMetadataProbe
+import dev.personal.amphora.player.Scrobbler
 import dev.personal.amphora.support.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -134,6 +136,17 @@ class AmphoraStore {
         store = sessionStore,
     )
     val lastFm = LastFmClient(transport = OkHttpLastFmTransport())
+
+    /** Last.fm scrobbler: now-playing updates at track start, one
+     *  scrobble when a track stops being current if pithos's rule says
+     *  it was earned. The session key lives in its own Keystore-sealed
+     *  file (iOS: Keychain account `lastfm.session`). */
+    val scrobbler = Scrobbler(
+        keychain = KeystoreSecretStore(
+            context = AmphoraContextProvider.context,
+            account = "lastfm.session",
+        ),
+    )
     /** The internet-radio directory client (radio-browser.info). The
      *  Radio tab's discovery state goes through `radio` — one shared
      *  client, so the mirror rotation and the play-click ping see the
@@ -224,6 +237,11 @@ class AmphoraStore {
     /** Tracks already handed to the player — the next playlist must not
      *  queue the same track twice. */
     private var queuedTrackTokens: MutableSet<String> = mutableSetOf()
+
+    /** When the current track began playing — Last.fm wants the start
+     *  time, not the scrobble time (set in the onTrackChanged
+     *  observer). */
+    private var trackStartedAt: Long = System.currentTimeMillis()
 
     /** One backed-off prefetch retry after a failed prefetch (the port
      *  of schedulePrefetchRetry's Task). */
@@ -506,6 +524,15 @@ class AmphoraStore {
                 updateRadioCustomStation(intent.station, intent.name, intent.url)
             is Intent.DeleteRadioCustomStation ->
                 deleteRadioCustomStation(intent.station)
+            is Intent.AuthenticateLastFm ->
+                scrobbler.authenticate(intent.username, intent.password)
+            is Intent.SignOutLastFm ->
+                // signOut fires onEnabledChanged(false), which persists.
+                scrobbler.signOut()
+            is Intent.SetScrobblingEnabled -> {
+                scrobbler.isEnabled = intent.enabled
+                updatePreferences { it.copy(scrobblingEnabled = intent.enabled) }
+            }
             is Intent.DismissError -> lastErrorMessage = null
         }
     }
@@ -566,6 +593,9 @@ class AmphoraStore {
             val url: String,
         ) : Intent()
         data class DeleteRadioCustomStation(val station: pandoracore.RadioStation) : Intent()
+        data class AuthenticateLastFm(val username: String, val password: String) : Intent()
+        data object SignOutLastFm : Intent()
+        data class SetScrobblingEnabled(val enabled: Boolean) : Intent()
         data object DismissError : Intent()
     }
 
@@ -607,6 +637,14 @@ class AmphoraStore {
         // The player asks for more tracks when its queue runs low — pithos
         // preloads the next playlist when one song remains.
         player.onNeedMoreTracks = { fetchMoreTracks() }
+        // The scrobbler's master switch rides in the preferences; the
+        // scrobbler flips its own enable flag on sign-in, sign-out and
+        // session expiry — persist every one of those flips, or a fresh
+        // sign-in would be forgotten on the next launch.
+        scrobbler.isEnabled = preferences.scrobblingEnabled
+        scrobbler.onEnabledChanged = { enabled ->
+            updatePreferences { it.copy(scrobblingEnabled = enabled) }
+        }
         // A new track means a new per-track state surface. The history
         // record, sleep-timer check, lyrics load and Last.fm now-playing
         // observers arrive with A5/A6/A8 — this unit wires the rating
@@ -642,10 +680,26 @@ class AmphoraStore {
             if (sleepTimer.mode == SleepTimer.Mode.endOfTrack && track != null) {
                 fireSleepTimer()
             }
-            // Lyrics follow the current track (never for ads — the radio
-            // guard arrives with A7); the per-track cache makes repeat
-            // listens free.
+            // Lyrics follow the current track (never for ads or radio —
+            // the loadLyrics guard clears any state from a Pandora
+            // track); the per-track cache makes repeat listens free.
             loadLyrics(track)
+            // Last.fm: profile "now playing" at track start (radio has
+            // no songs to scrobble). The scrobble itself fires from
+            // `onTrackFinished` (the pithos rule needs the reached
+            // position of the outgoing track).
+            if (track != null && !track.isRadio) {
+                trackStartedAt = System.currentTimeMillis()
+                scrobbler.nowPlaying(track)
+            }
+        }
+        // A track stopping (end, skip, station switch) is the scrobble
+        // moment — pithos evaluates its rule at song-ended.
+        player.onTrackFinished.add { track, reachedPosition ->
+            // A live stream earns no scrobble — there is no song.
+            if (!track.isRadio) {
+                scrobbler.scrobbleIfEarned(track, reachedPosition, trackStartedAt)
+            }
         }
         // "Currently playing" for the Home rows and the hero: the iOS
         // views compute `isCurrent && store.player.isPlaying`; this
