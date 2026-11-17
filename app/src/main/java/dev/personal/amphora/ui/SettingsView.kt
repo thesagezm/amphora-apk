@@ -74,6 +74,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,6 +102,12 @@ fun SettingsView(store: AmphoraStore) {
     var isConfirmingSignOut by remember { mutableStateOf(false) }
     var isConfirmingClearHistory by remember { mutableStateOf(false) }
     var pushed by remember { mutableStateOf<SettingsPush?>(null) }
+
+    // iOS `.onAppear`: read the cache size so the row shows what
+    // clearing it would reclaim.
+    LaunchedEffect(Unit) {
+        store.refreshArtworkCacheSize()
+    }
 
     BackHandler(enabled = pushed != null) { pushed = null }
 

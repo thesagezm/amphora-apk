@@ -14,13 +14,16 @@ before porting any view).
 
 ## Current Milestone
 
-**A8** — Last.fm scrobbling + Settings + Diagnostics + themes + crash
-handler. User directive 2026-11-17: "continue" (the keep-moving
-instruction after A7's code-complete). A7 landed code-complete and
-CI-green before it (A7.1–A7.5, every run green). Unit plan: A8.1
-Scrobbler + Last.fm secrets → A8.2 SettingsView + themes persistence →
-A8.3 Diagnostics + CrashReporter + log mirror → A8.4 About + parity
-pass. Phone verification of A4–A7 still owed below.
+**A8** — Last.fm + Settings + Diagnostics + themes + crash handler:
+**A8.1–A8.4 landed (milestone code-complete)**. User directive
+2026-11-17: "continue" after A7. The full surface is in: the Scrobbler
+(pithos rule, session lifecycle, the Settings status line), the
+Settings tab (appearance + accents persisted to theme.json, Last.fm
+connect, library clears, sign-out), Diagnostics (device + log + last
+crash, copy/share), About, and the CrashReporter/log-mirror data
+layer. Next: **A9** — robustness & parity pass (session-expiry soak,
+offline states, accessibility, output switching, device demo
+checklist) — on the user's confirmation/keep-moving.
 
 ## Queue (pending, in order)
 
@@ -128,6 +131,22 @@ pass. Phone verification of A4–A7 still owed below.
   `Amphora/UI/*` for every view's design).
 
 ## Log
+
+- 2026-11-17 — **A8.4 landed — the A8 parity pass, milestone
+  code-complete**: two gaps closed — SettingsView now refreshes
+  `artworkCacheBytes` on appear (iOS `.onAppear { refreshArtworkCacheSize() }`
+  — without it the Clear row stayed "Empty" until the first clear) and
+  MainActivity's Material scheme follows `ThemeController` (the port
+  of RootView's `.preferredColorScheme` — `.system` follows the
+  device, else the chosen family is forced; the app's own surfaces
+  already carried the tokens, the scheme colors the system
+  components). Full A8 surface walked against the iOS files:
+  Scrobbler semantics, Settings sections, Diagnostics pieces, About,
+  theme persistence, crash capture — all present. Port deltas kept:
+  no audio-route line in the diagnostics device summary (the output
+  picker is out of scope), uncaught-exception-only crash capture
+  (native kills are the system tombstone, matching the iOS re-raise).
+  Local gate green: `:core:test` + `:app:assembleDebug`.
 
 - 2026-11-17 — **A8.3 landed — CrashReporter + the AppLog file mirror**:
   `support/CrashReporter.kt` (port of CrashReporter.swift: install()
