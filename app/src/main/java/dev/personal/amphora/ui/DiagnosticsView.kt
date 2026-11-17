@@ -16,10 +16,6 @@
 //    scope, so the port cannot claim a route it does not track.
 //  - `UIPasteboard` → the Compose clipboard.
 //
-//  (The crash report section fills when CrashReporter lands — the iOS
-//  view renders that section only when a report exists, so its absence
-//  here is invisible until then.)
-//
 
 package dev.personal.amphora.ui
 
@@ -61,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.personal.amphora.store.AmphoraStore
 import dev.personal.amphora.support.AppLog
+import dev.personal.amphora.support.CrashReporter
 import kotlinx.coroutines.delay
 
 @Composable
@@ -70,18 +67,24 @@ fun DiagnosticsView(store: AmphoraStore) {
     val clipboard = LocalClipboardManager.current
 
     var logText by remember { mutableStateOf("") }
+    var crashText by remember { mutableStateOf<String?>(null) }
     var didCopy by remember { mutableStateOf(false) }
 
-    // `.task { refresh() }` — re-read the buffer (the file-mirror flush
-    // and the crash report arrive with CrashReporter, A8.3).
+    // `.task { refresh() }` — flush the file mirror to disk and re-read
+    // everything, including the previous session's crash report.
     LaunchedEffect(Unit) {
-        logText = AppLog.recentLines.joinToString("\n")
+        AppLog.flushNow()
+        logText = AppLog.text()
+        crashText = CrashReporter.previousCrashReport
     }
 
     val logLines = if (logText.isEmpty()) 0 else logText.split("\n").size
     val reportText = buildString {
         append(deviceSummary(context))
         append("\n\n")
+        crashText?.let {
+            append("--- last crash ---\n$it\n\n")
+        }
         append("--- log ---\n$logText")
     }
 
@@ -124,7 +127,7 @@ fun DiagnosticsView(store: AmphoraStore) {
                 )
             }
         }
-        if (logText.isEmpty()) {
+        if (logText.isEmpty() && crashText == null) {
             // iOS ContentUnavailableView — nothing recorded yet.
             Column(
                 modifier = Modifier
@@ -161,6 +164,16 @@ fun DiagnosticsView(store: AmphoraStore) {
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
             ) {
+                crashText?.let { crash ->
+                    DiagnosticsSection("Last crash") {
+                        Text(
+                            text = crash,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFFFF5A5A).copy(alpha = 0.9f),
+                        )
+                    }
+                }
                 DiagnosticsSection("Device") {
                     Text(
                         text = deviceSummary(context),

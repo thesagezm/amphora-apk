@@ -129,6 +129,23 @@ pass. Phone verification of A4–A7 still owed below.
 
 ## Log
 
+- 2026-11-17 — **A8.3 landed — CrashReporter + the AppLog file mirror**:
+  `support/CrashReporter.kt` (port of CrashReporter.swift: install()
+  reads `last-crash.txt` before resetting it — the previous session's
+  report — and chains the default uncaught-exception handler, writing
+  exception class/message/stack + the 24-line log tail; the iOS
+  raw-memory crashTail dance is unnecessary here because an uncaught-
+  exception handler runs as regular code and can read `AppLog`'s
+  buffer directly; hard native kills never reach a Java handler — the
+  system tombstone is the record, matching the iOS signal path's
+  re-raise) + AppLog grows `debug` (the A6.1 delta closed), `text()`,
+  `flushNow()` and the 2 s-debounced `amphora.log` mirror (atomic
+  tmp+rename writes, best-effort) + DiagnosticsView's "Last crash"
+  section (red monospace) + the flush-then-read refresh + the
+  report including the crash section, wired into Copy/Share +
+  `CrashReporter.install()` at MainActivity.onCreate (iOS AmphoraApp.init).
+  Local gate green: `:core:test` + `:app:assembleDebug`.
+
 - 2026-11-17 — **A8.2 landed — the Settings tab + themes persistence +
   the About/Diagnostics screens**: `ThemeController` grows the port of
   Store/ThemeController.swift (theme.json in filesDir — the same

@@ -19,12 +19,17 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.remember
 import dev.personal.amphora.store.AmphoraStore
 import dev.personal.amphora.support.AppLog
+import dev.personal.amphora.support.CrashReporter
 import dev.personal.amphora.ui.RootView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AmphoraContextProvider.install(this)
+        // The crash handler installs with the process context (iOS does
+        // it in AmphoraApp.init) — the previous session's report must
+        // be captured before anything can reset the file.
+        CrashReporter.install()
         enableEdgeToEdge()
         val version = "0.1.0"
         AppLog.info("Amphora launched, app $version build 1")
